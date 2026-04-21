@@ -148,11 +148,11 @@ Start Claude Code normally. OMNI is now active and invisible.
 ```bash
 # Homebrew
 brew upgrade omni
-omni init --hook    # Reinstall hooks after upgrade
+omni init    # Reinstall hooks after upgrade
 
 # Manual
 curl -fsSL https://raw.githubusercontent.com/fajarhide/omni/main/scripts/install.sh | sh
-omni init --hook
+omni init
 ```
 
 See [MIGRATION.md](MIGRATION.md) for detailed upgrade instructions from 0.4.x.
@@ -794,9 +794,6 @@ When you run `omni doctor --fix`, OMNI will automatically repair:
 | Problem | Fix Applied |
 |---|---|
 | Missing `~/.omni/` directory | Creates it |
-| Claude Code hooks not installed | Runs `omni init --hook` |
-| MCP not registered | Runs `omni init --mcp` |
-| Untrusted project filters | Runs `omni trust` |
 | Broken `.toml` filter files | Renames to `.toml.bak` |
 | Historical `Unknown` stats records | Re-classifies with latest model |
 
@@ -904,7 +901,6 @@ omni init --claude     # Full Setup for Claude Code (Hooks + MCP)
 omni init --vscode     # Setup for VS Code Continue.dev
 omni init --opencode   # Setup for OpenCode plugin
 omni init --codex      # Setup for Codex CLI
-omni init --hook       # Setup Claude Hooks only
 omni init --mcp        # Setup Claude MCP Server only
 omni init --status     # Check Claude installation status
 omni init --uninstall  # Remove all OMNI components from Claude
@@ -1000,8 +996,6 @@ When `--fix` is passed, OMNI will automatically resolve detected issues:
 | Issue | Fix Applied |
 |---|---|
 | Missing `~/.omni/` directory | Creates the directory |
-| Missing Claude Code hooks | Runs `omni init --hook` |
-| Missing MCP server registration | Runs `omni init --mcp` |
 | Untrusted project filters | Runs `omni trust` on the project |
 | Invalid user filter files | Renames broken `.toml` to `.toml.bak` |
 
@@ -1128,7 +1122,6 @@ omni doctor --fix  # Self-repair
 - [ ] Run `omni learn --verify` after applying any filters
 
 ### After Upgrading OMNI
-- [ ] Run `omni init --hook` (reinstall hooks after upgrade)
 - [ ] Run `omni doctor --fix` (re-classify historical data with new model)
 - [ ] Run `omni stats` to confirm everything is working
 

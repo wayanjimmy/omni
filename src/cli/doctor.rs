@@ -471,7 +471,8 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
                         local_report.filters.len().to_string().yellow(),
                         "[WARNING]".yellow().bold()
                     );
-                    warnings.push("Project filters found but not trusted. Run: `omni trust`.");
+                    warnings
+                        .push("Project filters found but not trusted. Run: `omni doctor --fix`.");
                     all_ok = false;
                 }
             }

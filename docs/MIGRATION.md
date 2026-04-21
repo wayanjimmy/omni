@@ -85,7 +85,7 @@ omni doctor         # Verify everything
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fajarhide/omni/main/scripts/install.sh | sh
-omni init --hook
+omni init
 omni doctor
 ```
 

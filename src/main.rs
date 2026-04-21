@@ -116,7 +116,10 @@ fn print_help() {
     println!("  {: <12} Show this help message", "help, -h".cyan());
 
     println!("\n{}", "EXAMPLES:".bold().bright_white());
-    println!("  omni init             {}", "# OMNI setup (interactive)".bright_black());
+    println!(
+        "  omni init             {}",
+        "# OMNI setup (interactive)".bright_black()
+    );
     println!(
         "  omni doctor           {}",
         "# Diagnose installation health".bright_black()
