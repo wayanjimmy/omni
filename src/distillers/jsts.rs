@@ -496,7 +496,7 @@ fn distill_eslint(input: &str) -> String {
 
     if !by_rule.is_empty() {
         let mut sorted: Vec<(String, u32)> = by_rule.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
 
         out.push_str("\n  top rules: ");
         let rules_str: Vec<String> = sorted

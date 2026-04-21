@@ -167,7 +167,7 @@ impl OmniServer {
                 let domain = s.inferred_domain.as_deref().unwrap_or("none");
 
                 let mut hot_vec: Vec<(&String, &u32)> = s.hot_files.iter().collect();
-                hot_vec.sort_by(|a, b| b.1.cmp(a.1));
+                hot_vec.sort_by_key(|a| std::cmp::Reverse(a.1));
                 let hot_str = if hot_vec.is_empty() {
                     "none".to_string()
                 } else {
@@ -195,7 +195,7 @@ impl OmniServer {
                 let task = s.inferred_task.as_deref().unwrap_or("none");
 
                 let mut hot_vec: Vec<(&String, &u32)> = s.hot_files.iter().collect();
-                hot_vec.sort_by(|a, b| b.1.cmp(a.1));
+                hot_vec.sort_by_key(|a| std::cmp::Reverse(a.1));
                 let hot_str = if hot_vec.is_empty() {
                     "none".to_string()
                 } else {

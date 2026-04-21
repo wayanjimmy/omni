@@ -55,7 +55,7 @@ Nothing to type. Nothing to configure per-session. Just use Claude Code normally
 
 ```mermaid
 flowchart TD
-    Install([Install OMNI]) --> Init["omni init --all"]
+    Install([Install OMNI]) --> Init["omni init (Interactive)"]
     Init --> Doctor["omni doctor"]
     Doctor --> OK{All checks pass?}
     OK -- No --> Fix["omni doctor --fix"]
@@ -116,10 +116,10 @@ cp target/release/omni ~/.local/bin/
 This is the most important step. Without this, OMNI cannot intercept Claude Code's terminal output.
 
 ```bash
-omni init --all
+omni init
 ```
 
-**What `--all` does:**
+**What `omni init` does:**
 - Installs the `PostToolUse` hook — intercepts every command output after it runs
 - Installs the `SessionStart` hook — injects your working context at session start
 - Installs the `PreCompact` hook — preserves context during Claude's memory compaction
@@ -897,11 +897,17 @@ cargo test 2>&1 | omni             # standard distillation
 Setup OMNI hooks in Claude Code.
 
 ```bash
-omni init --all        # Recommended: Full Setup (Hooks + MCP)
-omni init --hook       # Setup Hooks only
-omni init --mcp        # Setup MCP Server only
-omni init --status     # Check installation status
-omni init --uninstall  # Remove all OMNI components
+omni init              # Interactive Menu for any AI Agent
+
+# Or bypass the menu for a specific agent
+omni init --claude     # Full Setup for Claude Code (Hooks + MCP)
+omni init --vscode     # Setup for VS Code Continue.dev
+omni init --opencode   # Setup for OpenCode plugin
+omni init --codex      # Setup for Codex CLI
+omni init --hook       # Setup Claude Hooks only
+omni init --mcp        # Setup Claude MCP Server only
+omni init --status     # Check Claude installation status
+omni init --uninstall  # Remove all OMNI components from Claude
 ```
 
 **What it does:**
@@ -1085,7 +1091,7 @@ Hooks **always** exit 0 — they never crash the host agent.
 
 | Issue | Likely Cause | Fix |
 |---|---|---|
-| OMNI not filtering anything | Hooks not installed | Run `omni init --all` |
+| OMNI not filtering anything | Not installed | Run `omni init` and select your agent |
 | `omni stats` shows no data | First session not complete | Use Claude Code for a bit, then check |
 | Filter not matching a command | `match_command` regex wrong | Test regex at regex101.com, then `omni learn --verify` |
 | Session not persisting | DB not writable | Run `omni doctor`, check `~/.omni/` permissions |
@@ -1108,7 +1114,7 @@ omni doctor --fix  # Self-repair
 
 ### First-Time Setup
 - [ ] Install OMNI (`brew install fajarhide/tap/omni` or script)
-- [ ] Run `omni init --all`
+- [ ] Run `omni init` for your chosen agent
 - [ ] Run `omni doctor` — all checks should be green
 - [ ] If any checks fail, run `omni doctor --fix`
 - [ ] Use Claude Code normally for one session

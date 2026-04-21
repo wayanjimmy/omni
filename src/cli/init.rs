@@ -6,38 +6,59 @@ use std::path::PathBuf;
 
 fn print_help() {
     println!(
-        "\n{} {} — Setup OMNI hooks and MCP server",
+        "\n{} {} — Setup OMNI for your preferred AI Agent",
         "omni".bold().cyan(),
         "init".bold().yellow()
     );
     println!("\n{}", "USAGE:".bold().bright_white());
     println!("  omni {}", "init [FLAGS]".cyan());
 
-    println!("\n{}", "FLAGS:".bold().bright_white());
+    println!("\n{}", "SUPPORTED AGENTS:".bold().bright_white());
     println!(
-        "  {: <12} Perform full setup (hooks + MCP server)",
+        "  {: <14} Configure Claude Code (Anthropic)",
+        "--claude".cyan()
+    );
+    println!(
+        "  {: <14} Configure VS Code / Continue.dev",
+        "--vscode".cyan()
+    );
+    println!("  {: <14} Configure OpenCode", "--opencode".cyan());
+    println!("  {: <14} Configure Codex CLI", "--codex".cyan());
+    println!(
+        "  {: <14} Configure Antigravity IDE / Generic Webhook",
+        "--antigravity".cyan()
+    );
+
+    println!("\n{}", "CLAUDE SPECIFIC FLAGS:".bold().bright_white());
+    println!(
+        "  {: <14} Perform full Claude setup (hooks + MCP)",
         "--all".cyan()
     );
-    println!("  {: <12} Only install Claude Code hooks", "--hook".cyan());
-    println!("  {: <12} Only register MCP server", "--mcp".cyan());
+    println!("  {: <14} Only install hooks", "--hook".cyan());
+    println!("  {: <14} Only register MCP server", "--mcp".cyan());
     println!(
-        "  {: <12} Check current installation status",
+        "  {: <14} Check current installation status",
         "--status".cyan()
     );
     println!(
-        "  {: <12} Completely remove OMNI Hook and MCP server from Claude",
+        "  {: <14} Remove OMNI hooks and MCP server",
         "--uninstall".cyan()
     );
-    println!("  {: <12} Show this help message", "--help, -h".cyan());
+
+    println!("  {: <14} Show this help message", "--help, -h".cyan());
 
     println!("\n{}", "EXAMPLES:".bold().bright_white());
     println!(
-        "  omni init --all       {}",
-        "# Recommended full setup".bright_black()
+        "  omni init             {}",
+        "# Interactive menu".bright_black()
     );
     println!(
-        "  omni init --status    {}",
-        "# Verify installation".bright_black()
+        "  omni init --claude    {}",
+        "# Setup for Claude Code".bright_black()
+    );
+    println!(
+        "  omni init --vscode    {}",
+        "# Display VS Code instructions".bright_black()
     );
     println!();
 }
@@ -89,21 +110,130 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let mut is_claude = args.iter().any(|a| a == "--claude");
+    let mut is_vscode = args.iter().any(|a| a == "--vscode");
+    let mut is_opencode = args.iter().any(|a| a == "--opencode");
+    let mut is_codex = args.iter().any(|a| a == "--codex");
+    let mut is_antigravity = args.iter().any(|a| a == "--antigravity");
+
     let mut is_hook = args.iter().any(|a| a == "--hook");
     let mut is_mcp = args.iter().any(|a| a == "--mcp");
     let is_all = args.iter().any(|a| a == "--all");
     let is_status = args.iter().any(|a| a == "--status");
     let is_uninstall = args.iter().any(|a| a == "--uninstall");
 
-    // If no specific flag is provided, show help instead of defaulting to setup
-    if !is_all && !is_status && !is_uninstall && !is_hook && !is_mcp {
-        print_help();
+    if is_all {
+        is_claude = true;
+        is_hook = true;
+        is_mcp = true;
+    }
+
+    // No flags -> Interactive Mode
+    let no_flags = !is_claude
+        && !is_vscode
+        && !is_opencode
+        && !is_codex
+        && !is_antigravity
+        && !is_status
+        && !is_uninstall
+        && !is_hook
+        && !is_mcp;
+
+    if no_flags {
+        println!(
+            "\n{} {} — Choose an AI Agent to configure:\n",
+            "omni".bold().cyan(),
+            "init".bold().yellow()
+        );
+        println!("  [{}] Claude Code (Anthropic)", "1".cyan());
+        println!("  [{}] VS Code / Continue.dev", "2".cyan());
+        println!("  [{}] OpenCode", "3".cyan());
+        println!("  [{}] Codex CLI", "4".cyan());
+        println!("  [{}] Antigravity IDE / Generic Webhook", "5".cyan());
+        println!("  [{}] Quit\n", "q".yellow());
+
+        use std::io::Write;
+        print!("Select an option [1-5, q]: ");
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        match input.trim() {
+            "1" => {
+                is_claude = true;
+                is_hook = true;
+                is_mcp = true;
+            }
+            "2" => is_vscode = true,
+            "3" => is_opencode = true,
+            "4" => is_codex = true,
+            "5" => is_antigravity = true,
+            _ => return Ok(()),
+        }
+        println!();
+    }
+
+    if is_vscode {
+        println!("{}", "🤖 VS Code / Continue.dev Setup".bold().cyan());
+        println!("\nOMNI natively integrates with Continue.dev via our MCP context provider.");
+        println!(
+            "\n{} Add the typescript provider to your project:",
+            "1.".bold()
+        );
+        println!(
+            "   See the provider source at: {}",
+            "integrations/continue-dev/".bright_black()
+        );
+        println!("\n{} Alternatively, use tasks.json:", "2.".bold());
+        println!(
+            "   See the configuration at: {}",
+            "integrations/vscode/tasks.json".bright_black()
+        );
+        println!(
+            "\nTune the agent's aggressiveness in {}",
+            "~/.omni/config.toml".yellow()
+        );
         return Ok(());
     }
 
-    if is_all {
-        is_hook = true;
-        is_mcp = true;
+    if is_opencode {
+        println!("{}", "🤖 OpenCode Setup".bold().cyan());
+        println!("\nOMNI provides a native typescript plugin for OpenCode.");
+        println!("\n{} Navigate to the plugin directory:", "1.".bold());
+        println!("   cd integrations/opencode/");
+        println!("\n{} Install and build:", "2.".bold());
+        println!("   npm install && npm run build");
+        println!(
+            "\nTune the agent's aggressiveness in {} under {}",
+            "~/.omni/config.toml".yellow(),
+            "[agents.opencode]".blue()
+        );
+        return Ok(());
+    }
+
+    if is_codex {
+        println!("{}", "🤖 Codex CLI Setup".bold().cyan());
+        println!("\nOMNI provides a wrapper script to intercept and filter Codex commands.");
+        println!("\n{} View the wrapper script:", "1.".bold());
+        println!("   cat integrations/codex-cli/omni-wrapper.sh");
+        println!(
+            "\n{} Symlink or configure it in your Codex config.",
+            "2.".bold()
+        );
+        return Ok(());
+    }
+
+    if is_antigravity {
+        println!("{}", "🤖 Antigravity IDE Setup".bold().cyan());
+        println!("\nAntigravity can use OMNI via the generic webhook protocol or MCP.");
+        println!("\n{} Start the OMNI webhook server:", "1.".bold());
+        println!("   omni serve --port=7891");
+        println!("\n{} Import the plugin manifest:", "2.".bold());
+        println!(
+            "   File: {}",
+            "integrations/antigravity/antigravity.plugin.json".bright_black()
+        );
+        return Ok(());
     }
 
     let exe_path = env::current_exe()?.to_string_lossy().to_string();
@@ -112,7 +242,12 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         let (_, val) = initialize_settings()?;
         let (post_ok, session_ok, pre_ok) = check_status(&val, &exe_path);
 
-        println!("\n{}", "OMNI Installation Status:".bold().bright_white());
+        println!(
+            "\n{}",
+            "Claude Code OMNI Installation Status:"
+                .bold()
+                .bright_white()
+        );
 
         let fmt_status = |ok: bool| {
             if ok {
@@ -179,11 +314,17 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
 
         let new_content = serde_json::to_string_pretty(&val)?;
         fs::write(&path, new_content)?;
-        println!("✓ OMNI hooks and MCP server uninstalled");
+        println!("✓ OMNI hooks and MCP server uninstalled from Claude");
         return Ok(());
     }
 
-    if is_hook || is_mcp {
+    if is_claude || is_hook || is_mcp {
+        if is_claude {
+            is_hook = true;
+            is_mcp = true;
+            println!("{}", "🤖 Claude Code Setup".bold().cyan());
+        }
+
         let (path, mut val) = initialize_settings()?;
         let _ = backup_settings(&path);
 
