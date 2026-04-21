@@ -1,29 +1,11 @@
 use crate::pipeline::toml_filter;
 use crate::pipeline::{DistillResult, Route, SessionState, collapse, scorer};
 use crate::store::sqlite::Store;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-#[derive(Deserialize)]
-struct HookInput {
-    tool_name: String,
-    tool_input: Option<ToolInput>,
-    tool_response: Option<ToolResponse>,
-}
-
-#[derive(Deserialize)]
-struct ToolInput {
-    command: Option<String>,
-    path: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ToolResponse {
-    content: Option<serde_json::Value>,
-    stdout: Option<String>,
-    stderr: Option<String>,
-}
+// Input parsing moved to hooks::normalize
 
 #[derive(Serialize)]
 struct HookOutput {
@@ -38,92 +20,43 @@ struct HookSpecificOutput {
     #[serde(rename = "updatedResponse")]
     updated_response: String,
 }
-
-fn extract_content(value: &serde_json::Value) -> Option<String> {
-    if let Some(s) = value.as_str() {
-        return Some(s.to_string());
-    }
-    if let Some(arr) = value.as_array() {
-        let mut out = String::new();
-        for item in arr {
-            if let Some(obj) = item.as_object()
-                && let Some(t) = obj.get("type")
-                && t == "text"
-                && let Some(text) = obj.get("text")
-                && let Some(s) = text.as_str()
-            {
-                out.push_str(s);
-                out.push('\n');
-            }
-        }
-        if out.is_empty() {
-            return None;
-        }
-        return Some(out.trim_end().to_string());
-    }
-    None
-}
-
-/// Extracts content from tool_response, trying `content` first (Cursor, Windsurf)
-/// then falling back to `stdout`/`stderr` (Claude Code format).
-fn extract_tool_content(input: &HookInput) -> Option<String> {
-    let response = input.tool_response.as_ref()?;
-
-    // Try structured `content` field first
-    if let Some(ref val) = response.content
-        && let Some(s) = extract_content(val)
-    {
-        return Some(s);
-    }
-
-    // Fall back to stdout/stderr (Claude Code format)
-    if let Some(ref stdout) = response.stdout
-        && !stdout.is_empty()
-    {
-        let mut result = stdout.clone();
-        if let Some(ref stderr) = response.stderr
-            && !stderr.is_empty()
-        {
-            result.push_str("\n[stderr]\n");
-            result.push_str(stderr);
-        }
-        return Some(result);
-    }
-
-    None
-}
-
 pub fn process_payload(
     input_str: &str,
     store: Option<Arc<Store>>,
     session: Option<Arc<Mutex<SessionState>>>,
 ) -> Option<String> {
-    let parsed: HookInput = match serde_json::from_str(input_str) {
-        Ok(p) => p,
-        Err(_) => {
-            return None;
-        }
-    };
+    let normalized = crate::hooks::normalize::normalize(input_str)?;
 
-    let content = extract_tool_content(&parsed)?;
+    let content = normalized.content;
+
+    let config = crate::guard::config::load_config();
+    let agent_config = config.for_agent(&normalized.agent_id);
 
     // Route based on tool_name: handle non-Bash tools with specialized distillation
-    match parsed.tool_name.as_str() {
+    match normalized.tool_name.as_str() {
         "Bash" => { /* fall through to existing pipeline below */ }
-        "Read" | "ReadFile" | "read_file" => {
-            let filepath = parsed
-                .tool_input
-                .as_ref()
-                .and_then(|i| i.path.as_deref())
-                .unwrap_or("unknown");
-            return process_file_read(&content, filepath)
-                .map(|distilled| wrap_hook_output(distilled));
+        "Read" => {
+            if !agent_config.readfile_enabled() {
+                return None;
+            }
+            let filepath = if normalized.command.is_empty() {
+                "unknown"
+            } else {
+                &normalized.command
+            };
+            return process_file_read(&content, filepath).map(wrap_hook_output);
         }
-        "Grep" | "grep" => {
-            return process_grep_output(&content).map(|distilled| wrap_hook_output(distilled));
+        "Grep" => {
+            if !agent_config.grep_enabled() {
+                return None;
+            }
+            return process_grep_output(&content).map(wrap_hook_output);
         }
-        "WebFetch" | "web_fetch" => {
-            return process_web_content(&content).map(|distilled| wrap_hook_output(distilled));
+        "WebFetch" => {
+            if !agent_config.webfetch_enabled() {
+                return None;
+            }
+            return process_web_content(&content).map(wrap_hook_output);
         }
         _ => return None, // Edit, Write, etc. — don't need distillation
     }
@@ -132,11 +65,8 @@ pub fn process_payload(
         return None;
     }
 
-    let command = parsed
-        .tool_input
-        .as_ref()
-        .and_then(|i| i.command.clone())
-        .unwrap_or_default();
+    let command = normalized.command.clone();
+    let _agent_id = &normalized.agent_id;
 
     let clean_command = if let Some(stripped) = command.strip_prefix("omni exec ") {
         stripped
@@ -264,13 +194,15 @@ pub fn process_payload(
         }
     }
 
-    // Determine Route
+    // Determine Route based on agent config thresholds
     let ratio = 1.0 - (final_out.len() as f32 / content.len().max(1) as f32);
+    let (keep_threshold, soft_threshold) = agent_config.route_thresholds();
+
     let route = if !rewind_hash.is_empty() {
         Route::Rewind
-    } else if ratio >= 0.7 {
+    } else if ratio >= keep_threshold {
         Route::Keep
-    } else if ratio >= 0.3 {
+    } else if ratio >= soft_threshold {
         Route::Soft
     } else {
         Route::Passthrough
@@ -316,7 +248,13 @@ pub fn process_payload(
             .and_then(|lock| lock.lock().ok())
             .map(|s| s.session_id.clone())
             .unwrap_or_else(|| "unknown".to_string());
-        s.record_distillation(&session_id, &result, clean_command, &project_path);
+        s.record_distillation(
+            &session_id,
+            &result,
+            clean_command,
+            &project_path,
+            _agent_id,
+        );
 
         if let Some(ref sess) = session {
             let tracker = crate::session::tracker::SessionTracker::new(sess.clone(), s.clone());
@@ -831,9 +769,9 @@ mod tests {
         let noise = (0..30)
             .map(|i| {
                 // Generate completely distinct strings with varying lengths and chars
-                let chars: String = std::iter::repeat((b'a' + (i % 26) as u8) as char)
-                    .take(40 + (i as usize * 3))
-                    .collect();
+                let chars: String =
+                    std::iter::repeat_n((b'a' + (i % 26) as u8) as char, 40 + (i as usize * 3))
+                        .collect();
                 format!("unqiue_prefix_{} {}\n", i, chars)
             })
             .collect::<String>();
@@ -859,15 +797,22 @@ mod tests {
 
     #[test]
     fn test_array_content_format_extracted_correctly() {
-        let arr = json!([
-            {"type": "text", "text": "hello\n"},
-            {"type": "text", "text": "world ".repeat(10)},
-            {"type": "text", "text": "!"}
-        ]);
-        let extracted = extract_content(&arr).expect("must succeed");
-        assert!(extracted.contains("hello"));
-        assert!(extracted.contains("world world"));
-        assert!(extracted.ends_with("!"));
+        // Verify array content extraction via normalize (Cursor/Windsurf format)
+        let input = json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "ls" },
+            "tool_response": {
+                "content": [
+                    {"type": "text", "text": "hello\n"},
+                    {"type": "text", "text": "world ".repeat(10)},
+                    {"type": "text", "text": "!"}
+                ]
+            }
+        });
+        let norm = crate::hooks::normalize::normalize(&input.to_string()).expect("must normalize");
+        assert!(norm.content.contains("hello"));
+        assert!(norm.content.contains("world world"));
+        assert!(norm.content.ends_with("!"));
     }
 
     #[test]
@@ -913,11 +858,10 @@ mod tests {
                 "interrupted": false
             }
         });
-        let parsed: HookInput = serde_json::from_value(input).expect("must parse");
-        let content = extract_tool_content(&parsed).expect("must extract");
-        assert!(content.contains("line 0 of output"));
-        assert!(content.contains("[stderr]"));
-        assert!(content.contains("warning: unused variable"));
+        let norm = crate::hooks::normalize::normalize(&input.to_string()).expect("must normalize");
+        assert!(norm.content.contains("line 0 of output"));
+        assert!(norm.content.contains("[stderr]"));
+        assert!(norm.content.contains("warning: unused variable"));
     }
 
     #[test]
@@ -955,6 +899,49 @@ mod tests {
         assert!(
             res.contains("test.txt"),
             "content field should be used, not stdout"
+        );
+    }
+
+    #[test]
+    fn test_process_payload_opencode_format() {
+        let input = r#"{"type":"tool_result","tool":"shell","output":"pytest\n5 passed in 2.1s","command":"pytest"}"#;
+        // OpenCode format harus diproses sama seperti Claude Code
+        let _out = process_payload(input, None, None);
+        // Jika content < threshold, bisa None — tapi jangan crash
+        // Test ini memverifikasi tidak ada panic
+    }
+
+    #[test]
+    fn test_process_payload_codex_format() {
+        let long_output = "line\n".repeat(200);
+        let input = serde_json::json!({
+            "action": "run",
+            "command": "cargo build",
+            "result": long_output
+        });
+        let out = process_payload(&input.to_string(), None, None);
+        // Harus ada output (bukan None) untuk input panjang
+        // (cargo build dengan 200 baris harusnya di-distilasi)
+        assert!(
+            out.is_some(),
+            "Codex format harus di-distilasi jika output panjang"
+        );
+    }
+
+    #[test]
+    fn test_claude_code_still_works_after_refactor() {
+        // REGRESSION TEST — CRITICAL
+        let input = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo build"},
+            "tool_response": {
+                "stdout": "error[E0382]: borrow of moved value\n  --> src/main.rs:47\n".repeat(50)
+            }
+        });
+        let out = process_payload(&input.to_string(), None, None);
+        assert!(
+            out.is_some(),
+            "Claude Code format harus tetap bekerja setelah refactor"
         );
     }
 }
