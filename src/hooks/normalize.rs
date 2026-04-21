@@ -450,18 +450,18 @@ mod tests {
 
     #[test]
     fn test_extract_array_content() {
-        let json: Value = serde_json::from_str(
+        let json: serde_json::Value = serde_json::from_str(
             r#"[{"type":"text","text":"hello"},{"type":"text","text":"world"}]"#,
         )
-        .unwrap();
-        let content = extract_value_content(&json).unwrap();
+        .expect("Valid JSON");
+        let content = extract_value_content(&json).expect("Content exists");
         assert_eq!(content, "hello\nworld");
     }
 
     #[test]
     fn test_normalize_claude() {
         let input = r#"{"tool_name":"Bash","tool_input":{"command":"echo hello"},"tool_response":{"stdout":"hello"}}"#;
-        let norm = normalize(input).unwrap();
+        let norm = normalize(input).expect("Normalized successfully");
         assert_eq!(norm.agent_id, "claude_code");
         assert_eq!(norm.tool_name, "Bash");
         assert_eq!(norm.content, "hello");
@@ -471,7 +471,7 @@ mod tests {
     fn test_normalize_opencode() {
         let input =
             r#"{"type":"tool_result","tool":"shell","output":"hello","command":"echo hello"}"#;
-        let norm = normalize(input).unwrap();
+        let norm = normalize(input).expect("Normalized successfully");
         assert_eq!(norm.agent_id, "opencode");
         assert_eq!(norm.tool_name, "Bash");
         assert_eq!(norm.content, "hello");

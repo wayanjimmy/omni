@@ -682,7 +682,7 @@ mod tests {
         });
         let out = process_payload(&input.to_string(), None, None);
         assert!(out.is_some(), "Large ReadFile must be distilled");
-        let res = out.unwrap();
+        let res = out.expect("Output exists");
         assert!(
             res.contains("OMNI ReadFile"),
             "Must have OMNI ReadFile label"
@@ -708,7 +708,7 @@ mod tests {
         });
         let out = process_payload(&input.to_string(), None, None);
         assert!(out.is_some(), "Grep output must be distilled");
-        let res = out.unwrap();
+        let res = out.expect("Output exists");
         assert!(res.contains("OMNI Grep"), "Must have OMNI Grep label");
         assert!(res.contains("matches"), "Must show match count");
     }
@@ -784,7 +784,7 @@ mod tests {
         });
         let out = process_payload(&input.to_string(), None, None);
         assert!(out.is_some());
-        let res = out.unwrap();
+        let res = out.expect("Output exists");
         println!("PASSTHROUGH RES: {}", res);
         assert!(res.contains("OMNI: Passthrough"));
     }
