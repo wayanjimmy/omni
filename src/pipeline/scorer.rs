@@ -243,9 +243,8 @@ pub fn score_segments(
         }
         SegmentationMode::Line => {
             // Segment per line
-            let mut line_num = 1;
             let mut boost_counter = 0;
-            for line in input.lines() {
+            for (line_num, line) in (1..).zip(input.lines()) {
                 let mut tier = classify_line(line);
 
                 if tier == SignalTier::Critical {
@@ -272,7 +271,6 @@ pub fn score_segments(
                     context_score,
                     line_range: (line_num, line_num),
                 });
-                line_num += 1;
             }
         }
     }

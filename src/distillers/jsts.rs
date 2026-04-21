@@ -294,7 +294,7 @@ fn distill_tsc(input: &str) -> String {
 
     let mut sorted: Vec<(String, Vec<String>)> = by_file.into_iter().collect();
     // Sort by number of errors descending
-    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted.sort_by_key(|a| std::cmp::Reverse(a.1.len()));
 
     for (file, issues) in sorted.iter().take(5) {
         let count = issues.len();
