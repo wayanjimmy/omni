@@ -139,6 +139,68 @@ pub fn run_optimize(args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // --- meta-harness outer loop validation ---
+    println!(
+        "  {} Verifying candidate filter via Meta-Harness...",
+        "⟳".blue()
+    );
+    let temp_dir = std::env::temp_dir();
+    let temp_toml_path =
+        temp_dir.join(format!("omni_candidate_filter_{}.toml", std::process::id()));
+
+    // Ensure it has schema_version = 1 if the LLM forgot
+    let mut final_toml = extracted_toml.clone();
+    if !final_toml.contains("schema_version") {
+        final_toml = format!("schema_version = 1\n\n{}", final_toml);
+    }
+
+    std::fs::write(&temp_toml_path, &final_toml)?;
+    let report = crate::pipeline::toml_filter::load_from_file(&temp_toml_path)?;
+    let mut safe_to_apply = true;
+
+    if report.filters.is_empty() {
+        println!("  {} Rejected: LLM produced 0 valid filters.", "✗".red());
+        safe_to_apply = false;
+    }
+
+    if !report.warnings.is_empty() {
+        safe_to_apply = false;
+        for w in report.warnings {
+            println!("  {} Syntax/Regex Warning: {}", "⚠".yellow(), w);
+        }
+    }
+
+    if safe_to_apply {
+        let test_report = crate::pipeline::toml_filter::run_inline_tests(&report.filters);
+        if !test_report.failures.is_empty() {
+            println!(
+                "  {} Rejected: LLM filter failed its own inline tests.",
+                "✗".red()
+            );
+            for f in test_report.failures {
+                println!("    {}", f);
+            }
+            safe_to_apply = false;
+        } else {
+            println!(
+                "  {} Verification passed ({} test cases).",
+                "✓".green(),
+                test_report.passes
+            );
+        }
+    }
+
+    let _ = std::fs::remove_file(&temp_toml_path);
+
+    if !safe_to_apply {
+        println!(
+            "{} Optimize loop aborted to protect OMNI configurations.",
+            "omni".cyan().bold()
+        );
+        return Ok(());
+    }
+    // --- END META-HARNESS ---
+
     // Append to learned.toml
     let toml_path = dirs::home_dir()
         .unwrap_or_default()
