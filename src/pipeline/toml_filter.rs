@@ -826,4 +826,35 @@ mod tests {
             panic!("TOML Filter Verification Failed");
         }
     }
+
+    #[test]
+    fn test_matches_with_project_types_filter_logic() {
+        // Because get_current_ecosystems uses std::env::current_dir(), which in our tests is the repo root.
+        // The repo root has Cargo.toml, so "rust" and "cargo" should be active.
+        let mut filter = TomlFilter {
+            name: "mock".to_string(),
+            description: None,
+            confidence: 1.0,
+            match_regex: Regex::new("").unwrap(),
+            strip_ansi: false,
+            replace_rules: vec![],
+            match_output: vec![],
+            line_filter: LineFilter::None,
+            max_lines: None,
+            on_empty: None,
+            project_types: Some(vec!["rust".to_string()]),
+            inline_tests: vec![],
+        };
+
+        // It should match since we are in a Rust project context
+        assert!(filter.matches("anything"));
+
+        // Change the project type to something not in the repo context
+        filter.project_types = Some(vec!["java".to_string()]);
+        assert!(!filter.matches("anything"));
+
+        // Remove project_types constraint; should match universally
+        filter.project_types = None;
+        assert!(filter.matches("anything"));
+    }
 }

@@ -94,3 +94,60 @@ pub fn get_input_cost() -> f64 {
         .and_then(|p| p.input_cost_per_million_tokens)
         .unwrap_or(3.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_distillation_mode_parsing_backward_compatibility() {
+        // Test new exact key
+        let toml_str = r#"
+            [global]
+            mode = "efficient"
+        "#;
+        let config: OmniConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.global.unwrap().mode,
+            Some(DistillationMode::Efficient)
+        );
+
+        // Test old alias functionality
+        let toml_str2 = r#"
+            [global]
+            aggressiveness = "conservative"
+        "#;
+        let config2: OmniConfig = toml::from_str(toml_str2).unwrap();
+        assert_eq!(
+            config2.global.unwrap().mode,
+            Some(DistillationMode::Conservative)
+        );
+
+        let toml_str3 = r#"
+            [global]
+            aggressiveness = "aggressive"
+        "#;
+        let config3: OmniConfig = toml::from_str(toml_str3).unwrap();
+        assert_eq!(
+            config3.global.unwrap().mode,
+            Some(DistillationMode::Aggressive)
+        );
+    }
+
+    #[test]
+    fn test_route_thresholds_logic() {
+        let mut cfg = AgentConfig::default();
+
+        cfg.mode = Some(DistillationMode::Debug);
+        assert_eq!(cfg.route_thresholds(), (0.90, 0.50));
+
+        cfg.mode = Some(DistillationMode::Aggressive);
+        assert_eq!(cfg.route_thresholds(), (0.60, 0.20));
+
+        cfg.mode = Some(DistillationMode::Efficient);
+        assert_eq!(cfg.route_thresholds(), (0.60, 0.20));
+
+        cfg.mode = None; // fallback
+        assert_eq!(cfg.route_thresholds(), (0.70, 0.30));
+    }
+}
