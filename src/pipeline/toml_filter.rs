@@ -38,6 +38,8 @@ struct FilterConfig {
 
     max_lines: Option<usize>,
     on_empty: Option<String>,
+
+    project_types: Option<Vec<String>>,
 }
 
 fn default_confidence() -> f32 {
@@ -76,6 +78,7 @@ pub struct TomlFilter {
     max_lines: Option<usize>,
     on_empty: Option<String>,
     confidence: f32,
+    pub project_types: Option<Vec<String>>,
     pub inline_tests: Vec<TestConfig>,
 }
 
@@ -103,8 +106,54 @@ pub struct LoadReport {
     pub warnings: Vec<String>,
 }
 
+static ECOSYSTEM_CACHE: OnceLock<Vec<String>> = OnceLock::new();
+
+pub fn get_current_ecosystems() -> &'static [String] {
+    ECOSYSTEM_CACHE.get_or_init(|| {
+        let mut eco = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            if cwd.join("package.json").exists() {
+                eco.push("node".to_string());
+                eco.push("npm".to_string());
+                eco.push("yarn".to_string());
+                eco.push("pnpm".to_string());
+                eco.push("bun".to_string());
+            }
+            if cwd.join("Cargo.toml").exists() {
+                eco.push("rust".to_string());
+                eco.push("cargo".to_string());
+            }
+            if cwd.join("go.mod").exists() {
+                eco.push("go".to_string());
+            }
+            if cwd.join("requirements.txt").exists() || cwd.join("pyproject.toml").exists() {
+                eco.push("python".to_string());
+                eco.push("pip".to_string());
+            }
+            if cwd.join("pom.xml").exists() || cwd.join("build.gradle").exists() {
+                eco.push("java".to_string());
+            }
+            if cwd.join("Gemfile").exists() {
+                eco.push("ruby".to_string());
+            }
+            if cwd.join("composer.json").exists() {
+                eco.push("php".to_string());
+                eco.push("composer".to_string());
+            }
+        }
+        eco
+    })
+}
+
 impl TomlFilter {
     pub fn matches(&self, input: &str) -> bool {
+        if let Some(types) = self.project_types.as_ref().filter(|t| !t.is_empty()) {
+            let current = get_current_ecosystems();
+            // If the filter specifies a project type we don't have, skip.
+            if !types.iter().any(|t| current.contains(&t.to_lowercase())) {
+                return false;
+            }
+        }
         self.match_regex.is_match(input)
     }
 
@@ -322,6 +371,7 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
                 max_lines: config.max_lines,
                 on_empty: config.on_empty,
                 confidence: config.confidence,
+                project_types: config.project_types,
                 inline_tests,
             });
         }
@@ -506,6 +556,7 @@ fn create_filter_from_config(
         max_lines: config.max_lines,
         on_empty: config.on_empty,
         confidence: config.confidence,
+        project_types: config.project_types,
         inline_tests,
     })
 }
@@ -659,6 +710,7 @@ mod tests {
             line_filter: LineFilter::Strip(vec![Regex::new("noisy").unwrap()]),
             max_lines: None,
             on_empty: None,
+            project_types: None,
             inline_tests: vec![],
         };
         let input = "hello\nnoisy line\nworld";
@@ -679,6 +731,7 @@ mod tests {
             line_filter: LineFilter::Strip(vec![Regex::new("noisy").unwrap()]),
             max_lines: None,
             on_empty: None,
+            project_types: None,
             inline_tests: vec![],
         };
         let input = "\x1b[31mhello\x1b[0m\nnoisy\nworld";
@@ -702,6 +755,7 @@ mod tests {
             line_filter: LineFilter::Strip(vec![Regex::new("never reaches here").unwrap()]),
             max_lines: None,
             on_empty: None,
+            project_types: None,
             inline_tests: vec![],
         };
         assert_eq!(filter.apply("Wait\nSUCCESS\nNoisy"), "done");

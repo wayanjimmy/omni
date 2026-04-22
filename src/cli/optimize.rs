@@ -83,7 +83,7 @@ pub fn run_optimize(args: &[String]) -> anyhow::Result<()> {
     }
 
     let prompt = format!(
-        "You are the Omni self-optimizing engine. Analyze the following failed/suboptimal command execution trace and output a TOML filter (using [[filters]]) that properly extracts the meaningful signal (errors, completion states) while dropping repetitive noise loops.\n\nCommand: {}\n\nRaw Input:\n```\n{}\n```\n\nDistilled Output:\n```\n{}\n```\n\nDiagnostic Feedback:\n{}\n\nOutput ONLY valid format TOML code within a markdown codeblock, nothing else.",
+        "You are the Omni self-optimizing engine. Analyze the following failed/suboptimal command execution trace and output a TOML filter (using [[filters]]) that properly extracts the meaningful signal (errors, completion states) while dropping repetitive noise loops.\n\nCommand: {}\n\nRaw Input:\n```\n{}\n```\n\nDistilled Output:\n```\n{}\n```\n\nDiagnostic Feedback:\n{}\n\nIMPORTANT CROSS-PROJECT TRANSFER RULES:\n- If this filter addresses an error HIGHLY SPECIFIC to a certain programming ecosystem (like `node`, `rust`, `java`, `python`, `go`, `php`), you MUST add a `project_types = [\"<ecosystem>\"]` array to the TOML. This prevents it from matching same-named commands in other ecosystems.\n- If it applies universally, omit the `project_types` field.\n\nOutput ONLY valid format TOML code within a markdown codeblock, nothing else.",
         cmd,
         raw,
         distilled,
