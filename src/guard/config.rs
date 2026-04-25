@@ -2,9 +2,24 @@ use crate::paths;
 use serde::Deserialize;
 use std::fs;
 
+#[derive(Debug, Deserialize, Default, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DistillationMode {
+    Debug,
+    #[serde(alias = "conservative")]
+    Conservative,
+    #[default]
+    Balanced,
+    Efficient,
+    #[serde(alias = "aggressive")]
+    Aggressive,
+    Auto,
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct AgentConfig {
-    pub aggressiveness: Option<String>, // "conservative" | "balanced" | "aggressive"
+    #[serde(alias = "aggressiveness")]
+    pub mode: Option<DistillationMode>,
     pub enable_readfile_distillation: Option<bool>,
     pub enable_grep_distillation: Option<bool>,
     pub enable_webfetch_distillation: Option<bool>,
@@ -12,10 +27,12 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     pub fn route_thresholds(&self) -> (f32, f32) {
-        match self.aggressiveness.as_deref().unwrap_or("balanced") {
-            "conservative" => (0.75, 0.40),
-            "aggressive" => (0.60, 0.20),
-            _ => (0.70, 0.30), // balanced default
+        let mode = self.mode.clone().unwrap_or(DistillationMode::Balanced);
+        match mode {
+            DistillationMode::Debug => (0.90, 0.50),
+            DistillationMode::Conservative => (0.75, 0.40),
+            DistillationMode::Efficient | DistillationMode::Aggressive => (0.60, 0.20),
+            DistillationMode::Balanced | DistillationMode::Auto => (0.70, 0.30),
         }
     }
 
@@ -76,4 +93,62 @@ pub fn get_input_cost() -> f64 {
         .pricing
         .and_then(|p| p.input_cost_per_million_tokens)
         .unwrap_or(3.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_distillation_mode_parsing_backward_compatibility() {
+        // Test new exact key
+        let toml_str = r#"
+            [global]
+            mode = "efficient"
+        "#;
+        let config: OmniConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.global.unwrap().mode,
+            Some(DistillationMode::Efficient)
+        );
+
+        // Test old alias functionality
+        let toml_str2 = r#"
+            [global]
+            aggressiveness = "conservative"
+        "#;
+        let config2: OmniConfig = toml::from_str(toml_str2).unwrap();
+        assert_eq!(
+            config2.global.unwrap().mode,
+            Some(DistillationMode::Conservative)
+        );
+
+        let toml_str3 = r#"
+            [global]
+            aggressiveness = "aggressive"
+        "#;
+        let config3: OmniConfig = toml::from_str(toml_str3).unwrap();
+        assert_eq!(
+            config3.global.unwrap().mode,
+            Some(DistillationMode::Aggressive)
+        );
+    }
+
+    #[test]
+    fn test_route_thresholds_logic() {
+        let mut cfg = AgentConfig {
+            mode: Some(DistillationMode::Debug),
+            ..Default::default()
+        };
+        assert_eq!(cfg.route_thresholds(), (0.90, 0.50));
+
+        cfg.mode = Some(DistillationMode::Aggressive);
+        assert_eq!(cfg.route_thresholds(), (0.60, 0.20));
+
+        cfg.mode = Some(DistillationMode::Efficient);
+        assert_eq!(cfg.route_thresholds(), (0.60, 0.20));
+
+        cfg.mode = None; // fallback
+        assert_eq!(cfg.route_thresholds(), (0.70, 0.30));
+    }
 }

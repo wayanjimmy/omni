@@ -79,10 +79,17 @@ check "version output" "$VERSION_OUT" "omni"
 # ─── 2. Help ─────────────────────────────────────────────
 echo "▸ Scenario 2: Help"
 HELP_OUT=$("$OMNI" help 2>&1)
+check "help shows init" "$HELP_OUT" "init"
 check "help shows stats" "$HELP_OUT" "stats"
-check "help shows doctor" "$HELP_OUT" "doctor"
-check "help shows learn" "$HELP_OUT" "learn"
 check "help shows session" "$HELP_OUT" "session"
+check "help shows learn" "$HELP_OUT" "learn"
+check "help shows rewind" "$HELP_OUT" "rewind"
+check "help shows optimize" "$HELP_OUT" "optimize"
+check "help shows doctor" "$HELP_OUT" "doctor"
+check "help shows reset" "$HELP_OUT" "reset"
+check "help shows diff" "$HELP_OUT" "diff"
+check "help shows update" "$HELP_OUT" "update"
+check "help shows version" "$HELP_OUT" "version"
 check "help shows pipe mode" "$HELP_OUT" "| omni"
 
 # ─── 3. Doctor ───────────────────────────────────────────
