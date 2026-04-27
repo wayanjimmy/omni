@@ -512,6 +512,10 @@ impl ServerHandler for OmniServer {
                     Self::omni_trust_tool_attr(),
                     Self::omni_session_tool_attr(),
                     Self::omni_search_tool_attr(),
+                    Self::omni_history_tool_attr(),
+                    Self::omni_budget_tool_attr(),
+                    Self::omni_agents_tool_attr(),
+                    Self::omni_knowledge_tool_attr(),
                 ],
                 next_cursor: None,
             })
