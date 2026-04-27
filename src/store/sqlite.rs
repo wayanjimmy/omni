@@ -886,7 +886,7 @@ impl Store {
         }
     }
 
-    // ── v0.5.7: Session Summaries ─────────────────────────────────────
+    // ──  Session Summaries ─────────────────────────────────────
 
     #[allow(clippy::too_many_arguments)]
     pub fn save_session_summary(
@@ -955,7 +955,7 @@ impl Store {
         }
     }
 
-    // ── v0.5.7: Retrieve Events (adaptive threshold) ──────────────────
+    // ──  Retrieve Events (adaptive threshold) ──────────────────
 
     pub fn record_retrieve_event(&self, command_prefix: &str, hash: &str, agent_id: &str) {
         let conn = match self.conn.lock() {
@@ -1008,7 +1008,7 @@ impl Store {
         .ok()
     }
 
-    // ── v0.5.7: Project Knowledge (cross-session semantic memory) ─────
+    // ──  Project Knowledge (cross-session semantic memory) ─────
 
     pub fn upsert_project_knowledge(
         &self,
@@ -1059,7 +1059,7 @@ impl Store {
         }
     }
 
-    // ── v0.5.7: Multi-Agent Sessions ─────────────────────────────────
+    // ──  Multi-Agent Sessions ─────────────────────────────────
 
     /// Sync agent session for cross-agent state sharing
     pub fn sync_agent_session(
