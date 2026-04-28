@@ -57,9 +57,10 @@ AI agents like Claude are only as smart as the context you feed them. When you f
 
 - **No More AI Confusion**: Omni acts like a smart sieve. If a test fails, it shows the AI *only* the specific error line and stack trace. Your AI stops getting distracted by loading spinners or noisy dependency logs, allowing it to focus directly on the real problem.
 - **90% Token Reduction**: By completely eliminating useless terminal noise, you drastically cut your agentic API bills instantly.
-- **Zero Information Loss**: Worried Omni filtered something important? Don't be. Omni saves the raw output in a local archive (`RewindStore`). If the AI actually needs the full log, it can just automatically ask for it.
-- **Session Intelligence**: Omni remembers what you are doing. It knows which files you are actively editing and stops feeding the AI context it already knows, saving even more tokens over time.
-- **Distill Monitor**: Track your token savings and costs over time. Just run `omni stats` to see how much money and space you've saved.
+- **Zero Information Loss**: Worried Omni filtered something important? Don't be. Omni saves the raw output in a local archive (`RewindStore`). If the AI actually needs the full log, it can just automatically ask for it using `omni_retrieve`.
+- **Session Intelligence**: Omni remembers what you are doing. It knows which files you are actively editing and stops feeding the AI context it already knows. Cross-session memory is now capable of preserving specific fixes permanently via `omni_knowledge`.
+- **Multi-Agent Collaboration**: Omni is fully aware of its environment via `omni_agents`. If you have Cursor running alongside Claude CLI, they can seamlessly share the same filtered memory streams, active errors, and execution environments without clashing.
+- **Distill Monitor**: Track your token savings and costs over time. Use `omni_budget` and `omni_history` right inside your LLM, or run `omni stats` locally to visualize your money saved.
 - **Visual Impact (`omni diff`)**: See exactly how much money and space you are saving. Just run `omni diff` to see the bulky raw output compared side-by-side to Omni's sleek, filtered version.
 
 ---
@@ -154,7 +155,7 @@ By default, `omni init --claude` automatically hooks into **Claude Code**. Howev
 
 1. **VS Code & Continue.dev**: Use our MCP context provider (`integrations/continue-dev/`).
 2. **OpenCode & Codex CLI**: Built-in wrappers automatically pipe command output to OMNI.
-3. **Antigravity IDE**: OMNI natively supports IDEs like Antigravity via MCP over stdio. Just import the plugin manifest (`integrations/antigravity/antigravity.plugin.json`).
+3. **Antigravity IDE**: OMNI registers as a native MCP server in Antigravity's config (`~/.gemini/antigravity/mcp_config.json`). Run `omni init --antigravity` to set up automatically.
 
 **Multi-Agent Tuning (`~/.omni/config.toml`)**
 Different agents have different pain points. Keep VS Code chat clean, whilst letting OpenCode read more data. Tune them individually:

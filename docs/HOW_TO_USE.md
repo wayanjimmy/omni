@@ -1142,7 +1142,21 @@ omni doctor --fix  # Self-repair
 
 ---
 
-## 14. Best Practices
+## 14. Multi-Agent & Cross-Session MCP Tools
+
+OMNI exposes advanced diagnostic and state-management tools natively to AI Agents via the Model Context Protocol (MCP).
+
+If you are using Claude Code, Cursor, or OpenClaw, the AI can independently call these tools without you typing anything. 
+
+- `omni_history`: The AI can retrieve its own distillation footprint. It shows how many tokens were saved per process, enabling the agent to gauge whether it has saturated its query scope.
+- `omni_budget`: A tool that allows the AI to estimate its token consumption vs threshold.
+- `omni_agents`: Multi-agent awareness tool. If multiple agents are running in the same repo, this tool broadcasts the "Presence State", Active Errors, and Inferred Tasks, preventing conflicting edits.
+- `omni_knowledge`: Allows an agent to commit project-specific rules, quirks, or learning variables permanently to the SQLite database. It loads dynamically during subsequent runtimes.
+- `omni_session(action)`: The agent can inspect or flush its active Hot Files or trace pointers explicitly.
+
+---
+
+## 15. Best Practices
 
 ### For TOML Filters
 
@@ -1180,7 +1194,7 @@ omni doctor --fix  # Self-repair
 
 ---
 
-## 15. Integrations
+## 16. Integrations
 
 OMNI is designed to be the "Intelligence Layer" for multiple agent frameworks.
 
@@ -1189,6 +1203,56 @@ You can use OMNI natively with OpenClaw by installing the official skill from Cl
 - **ClawHub**: [OMNI Semantic Signal Engine](https://clawhub.ai/fajarhide/omni-signal-engine)
 - **Install Command**: `clawhub install omni-signal-engine`
 - **Automatic Setup**: OpenClaw integration is completely automatic. Run `omni doctor --fix` to fetch and install the latest plugin directly from the OMNI public repository.
+
+### Antigravity IDE
+
+OMNI integrates with Antigravity IDE as a native MCP server, registered directly in Antigravity's MCP configuration file.
+
+**Automatic Setup:**
+```bash
+omni init --antigravity
+```
+
+This registers OMNI as an MCP server at:
+- **macOS/Linux**: `~/.gemini/antigravity/mcp_config.json`
+- **Windows**: `%USERPROFILE%\.gemini\antigravity\mcp_config.json`
+
+**Manual Setup:**
+
+If you prefer to configure manually, add the `omni` entry to your `mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "omni": {
+      "command": "/opt/homebrew/bin/omni",
+      "args": ["--mcp"],
+      "env": {
+        "OMNI_AGENT_ID": "antigravity"
+      }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> Replace `/opt/homebrew/bin/omni` with the actual path to your OMNI binary. You can find it by running `which omni`.
+
+**Verification:**
+```bash
+omni doctor    # Check Antigravity integration status
+```
+
+The doctor output will show:
+```
+  Antigravity IDE:
+   Config:         ~/.gemini/antigravity/mcp_config.json [OK]
+```
+
+**Uninstall:**
+```bash
+omni reset --antigravity   # Remove OMNI from Antigravity MCP config
+```
 
 ---
 

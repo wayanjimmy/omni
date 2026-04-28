@@ -5,9 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.6-rc3] - 2026-04-14
+## [0.5.7] - 2026-04-27
 
 ### Added
+- **Multi-Agent Awareness (`omni_agents`)**: New MCP tool allowing agents (e.g., Claude, Cursor, Copilot) to discover and interact with each other's state on the same project.
+- **Persistent Project Knowledge (`omni_knowledge`)**: Cross-session memory for agents to permanently learn and store project-specific quirks and filter preferences.
+- **Advanced ROI Diagnostics**: Added `omni_history` (distillation log) and `omni_budget` (ROI simulator) MCP tools directly to the agent toolkit.
+- **Meta-Harness Outer Loop**: Implemented `omni optimize` to automatically validate generated LLM filters.
+- **Non-Bash Tool Distillation**: Expanded engine routing for `ReadFile`, `Grep`, and `WebFetch` output.
+- **Distiller Context Preservation**: Added `-->` contextual error block preservation to the Build and Test distillers.
+- **Extended Hook Architecture**: New async hooks for `SessionEnd`, `PostToolUseFailure`, `FileChanged`, and `SubagentStart`.
+- **Antigravity IDE Integration**: Native MCP server bindings for Google's Antigravity environment (`~/.gemini/antigravity/mcp_config.json`).
+
+### Improved
+- **Positional Scorer Boost**: Dynamic positional-based priority bumping for active errors in multi-line outputs.
+- **Passthrough Visibility**: Short or low-compression outputs are now explicitly labeled with `[OMNI: Passthrough]` rather than silently omitted.
+
+## [0.5.6-rc3] - 2026-04-14
 - **Database Distiller**: New `DatabaseDistiller` for intelligent distillation of PostgreSQL, MySQL, and SQLite CLI output — strips verbose headers and retains only actionable error signals.
 - **Security Distiller**: New `SecurityDistiller` for CVE scanners (Trivy, Snyk, Semgrep) — collapses verbose scan reports into concise vulnerability summaries.
 - **VCS Distiller**: New `VcsDistiller` for version control tools beyond Git (Mercurial, SVN) with output-aware heuristics.
