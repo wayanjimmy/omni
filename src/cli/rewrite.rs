@@ -53,7 +53,8 @@ pub fn rewrite_logic(cmd_str: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[cfg(windows)]
+    use super::rewrite_logic;
 
     #[test]
     #[cfg(windows)]
