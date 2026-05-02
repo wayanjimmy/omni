@@ -1,4 +1,5 @@
 use crate::store::sqlite::Store;
+use crate::util::token_estimate::{estimate_tokens, ContentHint};
 use anyhow::Result;
 use colored::*;
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ pub fn format_bytes(n: u64) -> String {
 }
 
 pub fn format_tokens(bytes: u64) -> String {
-    let tokens = bytes / 4;
+    let tokens = estimate_tokens(bytes as usize, ContentHint::Mixed) as u64;
     if tokens < 1000 {
         format!("{}", tokens)
     } else if tokens < 1_000_000 {
@@ -44,9 +45,12 @@ fn format_bar_with_empty(pct: f64) -> String {
 }
 
 pub fn est_cost_usd(bytes_saved: u64) -> f64 {
+    est_cost_usd_with_hint(bytes_saved, ContentHint::Mixed)
+}
+
+pub fn est_cost_usd_with_hint(bytes_saved: u64, hint: ContentHint) -> f64 {
     let price = crate::guard::config::get_input_cost();
-    // ~4 chars per token
-    let tokens = bytes_saved as f64 / 4.0;
+    let tokens = estimate_tokens(bytes_saved as usize, hint) as f64;
     (tokens / 1_000_000.0) * price
 }
 
@@ -686,8 +690,8 @@ fn run_json(store: &Store) -> Result<()> {
     let periods_json: Vec<serde_json::Value> = periods
         .iter()
         .map(|(label, count, input, output)| {
-            let input_tokens = *input / 4;
-            let output_tokens = *output / 4;
+            let input_tokens = estimate_tokens(*input as usize, ContentHint::Mixed) as u64;
+            let output_tokens = estimate_tokens(*output as usize, ContentHint::Mixed) as u64;
             let savings_pct = if *input > 0 {
                 (100.0 * (1.0 - *output as f64 / *input as f64) * 10.0).round() / 10.0
             } else {

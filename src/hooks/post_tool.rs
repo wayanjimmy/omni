@@ -331,7 +331,10 @@ fn build_additional_context(
     session: &Option<Arc<Mutex<crate::pipeline::SessionState>>>,
 ) -> Option<String> {
     let saved_this_call = if result.input_bytes > result.output_bytes {
-        (result.input_bytes - result.output_bytes) / 4
+        crate::util::token_estimate::estimate_tokens(
+            result.input_bytes - result.output_bytes,
+            crate::util::token_estimate::ContentHint::Mixed,
+        )
     } else {
         0
     };
