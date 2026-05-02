@@ -243,18 +243,8 @@ pub fn score_segments(
         }
         SegmentationMode::Line => {
             // Segment per line
-            let mut boost_counter = 0;
             for (line_num, line) in (1..).zip(input.lines()) {
-                let mut tier = classify_line(line);
-
-                if tier == SignalTier::Critical {
-                    boost_counter = 5;
-                } else if boost_counter > 0 {
-                    if tier == SignalTier::Context || tier == SignalTier::Noise {
-                        tier = SignalTier::Important;
-                    }
-                    boost_counter -= 1;
-                }
+                let tier = classify_line(line);
 
                 let base_score = match tier {
                     SignalTier::Critical => 0.9,
@@ -275,7 +265,25 @@ pub fn score_segments(
         }
     }
 
+    apply_positional_boost(&mut segments);
+
     segments
+}
+
+pub(crate) fn apply_positional_boost(segments: &mut Vec<OutputSegment>) {
+    let mut boost_remaining = 0;
+    
+    for seg in segments.iter_mut() {
+        if seg.tier == SignalTier::Critical {
+            boost_remaining = 5;
+        } else if boost_remaining > 0 {
+            if seg.tier == SignalTier::Context || seg.tier == SignalTier::Noise {
+                seg.tier = SignalTier::Important;
+                seg.base_score = 0.7; // Update base score to match Important tier
+            }
+            boost_remaining -= 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -407,5 +415,44 @@ mod tests {
         assert_eq!(segments[6].tier, SignalTier::Important);
         // segment 7: back to context
         assert_eq!(segments[7].tier, SignalTier::Context);
+    }
+
+    #[test]
+    fn test_positional_boost_applies_to_git_hunk_mode() {
+        let input = "diff --git a/file b/file\n@@ -1,3 +1,4 @@\n error[E0308]: mismatched types\n@@ -10,2 +11,3 @@\n   --> src/main.rs:42";
+        let segments = score_segments(input, SegmentationMode::GitHunk, None);
+        
+        // Header
+        assert_eq!(segments[0].tier, SignalTier::Important); // "diff --git"
+        // Hunk 1 containing error
+        assert_eq!(segments[1].tier, SignalTier::Critical);
+        // Hunk 2 containing context line, gets boosted because it's right after critical
+        assert_eq!(segments[2].tier, SignalTier::Important);
+    }
+
+    #[test]
+    fn test_positional_boost_applies_to_test_group_mode() {
+        let input = "test result: ok\n--- FAIL: TestFoo\npanicked at\nat tests/file.rs:55\n--- PASS: TestBar";
+        let segments = score_segments(input, SegmentationMode::TestGroup, None);
+        
+        // 0: test result: ok
+        assert_eq!(segments[0].tier, SignalTier::Important);
+        // 1: --- FAIL: TestFoo...
+        assert_eq!(segments[1].tier, SignalTier::Critical);
+        // 2: --- PASS: TestBar
+        
+        // Let's test with SegmentationMode::Line as well for the backtrace
+        let input2 = "test result: FAILED\npanicked at something\njust some context\nnoise line";
+        let segments2 = score_segments(input2, SegmentationMode::Line, None);
+        assert_eq!(segments2[0].tier, SignalTier::Critical); // test result: FAILED
+        assert_eq!(segments2[1].tier, SignalTier::Important); // panicked at (Context boosted to Important)
+        assert_eq!(segments2[2].tier, SignalTier::Important); // boosted
+        assert_eq!(segments2[3].tier, SignalTier::Important); // boosted
+        
+        // For TestGroup, let's verify if a group without Critical/Important is boosted
+        let input3 = "--- FAIL: TestFoo\ntest something else\nContext line";
+        let segments3 = score_segments(input3, SegmentationMode::TestGroup, None);
+        assert_eq!(segments3[0].tier, SignalTier::Critical); // FAIL chunk
+        assert_eq!(segments3[1].tier, SignalTier::Important); // 'test something else' chunk gets boosted!
     }
 }
