@@ -27,6 +27,7 @@ pub fn classify_line(line: &str) -> SignalTier {
             "error[",
             "ERROR:",
             "Error:",
+            ": error:",  // Python diagnostic format (mypy, pylint)
             "error TS",
             "FAILED",
             "FAIL:",
@@ -273,7 +274,7 @@ pub fn score_segments(
     segments
 }
 
-pub(crate) fn apply_positional_boost(segments: &mut Vec<OutputSegment>) {
+pub(crate) fn apply_positional_boost(segments: &mut [OutputSegment]) {
     let mut boost_remaining = 0;
     
     for seg in segments.iter_mut() {

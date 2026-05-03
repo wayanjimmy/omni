@@ -485,6 +485,10 @@ impl Store {
         // TODO: implement
     }
 
+    pub fn record_passthrough(&self, _command: &str, _bytes: usize) {
+        // TODO: implement passthrough telemetry
+    }
+
     pub fn store_rewind(&self, content: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());

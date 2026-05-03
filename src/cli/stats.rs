@@ -844,17 +844,17 @@ mod tests {
     #[test]
     fn test_format_tokens_ranges() {
         assert_eq!(format_tokens(0), "0");
-        assert_eq!(format_tokens(400), "100"); // 400 bytes / 4 = 100 tokens
-        assert_eq!(format_tokens(40_000), "10K"); // 10K tokens
-        assert_eq!(format_tokens(4_000_000), "1.0M"); // 1M tokens
+        assert_eq!(format_tokens(380), "100"); // 380 bytes / 3.8 = 100 tokens
+        assert_eq!(format_tokens(38_000), "10K"); // 10K tokens
+        assert_eq!(format_tokens(3_800_000), "1.0M"); // 1M tokens
     }
 
     #[test]
     fn test_est_cost_usd_kalkulasi_benar() {
-        let cost = est_cost_usd(4_000_000);
+        let cost = est_cost_usd(3_800_000); // 1M tokens
         assert!((cost - 3.0).abs() < 0.01);
 
-        let cost2 = est_cost_usd(400_000);
+        let cost2 = est_cost_usd(380_000); // 100k tokens
         assert!((cost2 - 0.30).abs() < 0.01);
 
         assert_eq!(est_cost_usd(0), 0.0);

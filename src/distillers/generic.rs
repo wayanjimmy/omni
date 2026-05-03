@@ -44,26 +44,26 @@ impl Distiller for GenericDistiller {
         let mut out = String::new();
         let mut last_idx: Option<usize> = None;
 
-        for i in 0..segments.len() {
+        for (i, seg) in segments.iter().enumerate() {
             if selected_indices.contains(&i) {
-                if let Some(last) = last_idx {
-                    if i > last + 1 {
-                        out.push_str("... [omitted]\n");
-                    }
+                if let Some(last) = last_idx
+                    && i > last + 1
+                {
+                    out.push_str("... [omitted]\n");
                 }
-                out.push_str(&segments[i].content);
+                out.push_str(&seg.content);
                 out.push('\n');
                 last_idx = Some(i);
             }
         }
 
-        if let Some(last) = last_idx {
-            if last < segments.len() - 1 {
-                out.push_str(&format!(
-                    "... [{} more lines]\n",
-                    segments.len() - 1 - last
-                ));
-            }
+        if let Some(last) = last_idx
+            && last < segments.len() - 1
+        {
+            out.push_str(&format!(
+                "... [{} more lines]\n",
+                segments.len() - 1 - last
+            ));
         }
 
         out.trim().to_string()

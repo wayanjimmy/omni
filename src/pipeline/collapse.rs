@@ -93,10 +93,10 @@ fn is_git_hash_line(trimmed: &str) -> bool {
     let lower = trimmed.to_lowercase();
     
     // a. Starts with "commit " followed by 7-40 hex chars
-    if let Some(rest) = lower.strip_prefix("commit ") {
-        if rest.len() >= 7 && rest.len() <= 40 && rest.chars().all(|c| c.is_ascii_hexdigit()) {
-            return true;
-        }
+    if let Some(rest) = lower.strip_prefix("commit ")
+        && rest.len() >= 7 && rest.len() <= 40 && rest.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return true;
     }
     
     // b. Starts with 7-40 hex chars followed by space
