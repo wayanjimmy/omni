@@ -42,13 +42,17 @@ pub fn analyze_trace(raw_input: &str, distilled_output: &str, _command: &str) ->
         }
     }
 
-    // Check if they exist in distilled output
+    // F-09: Check if critical signals exist in distilled output
+    // Use a 40-char fingerprint prefix to handle formatting changes
     for crit in raw_critical {
-        if !distilled_output.contains(crit)
-            && !distilled_output.contains(&crit[..crit.len().max(20).min(crit.len())])
-        {
-            // Check substrings to handle slight formatting changes
+        let check_len = crit.len().min(40); // first 40 chars as fingerprint
+        let fingerprint = &crit[..check_len];
+        if !distilled_output.contains(fingerprint) {
             dropped_critical_lines += 1;
+            feedback_notes.push(format!(
+                "Critical signal may be dropped: '{}'...",
+                &crit[..crit.len().min(60)]
+            ));
         }
     }
 
@@ -104,5 +108,32 @@ mod tests {
         let distilled = "a".repeat(1500);
         let diag = analyze_trace(&raw, &distilled, "cat file.txt");
         assert_eq!(diag.category, DiagnosisCategory::Passthrough);
+    }
+
+    #[test]
+    fn test_analyze_trace_detects_dropped_error() {
+        let raw = "error[E0308]: mismatched types\n  --> src/main.rs:42\nnormal output\n";
+        let distilled = "Build output processed\nnormal output\n"; // error missing!
+
+        let diagnosis = analyze_trace(raw, distilled, "cargo build");
+        assert_eq!(diagnosis.category, DiagnosisCategory::FailedSignalDropped);
+        assert!(diagnosis.dropped_critical_lines > 0);
+        assert!(
+            diagnosis
+                .feedback_notes
+                .iter()
+                .any(|n| n.contains("Critical signal")),
+            "Must include feedback about dropped signal"
+        );
+    }
+
+    #[test]
+    fn test_analyze_trace_ok_when_error_preserved() {
+        let raw = "error[E0308]: mismatched types\n  --> src/main.rs:42\n";
+        let distilled = "Build: 1 errors, 0 warnings\nerror[E0308]: mismatched types\n";
+
+        let diagnosis = analyze_trace(raw, distilled, "cargo build");
+        assert_eq!(diagnosis.dropped_critical_lines, 0);
+        assert_ne!(diagnosis.category, DiagnosisCategory::FailedSignalDropped);
     }
 }

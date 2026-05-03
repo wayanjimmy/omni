@@ -172,7 +172,10 @@ impl SessionState {
 
     pub fn estimated_tokens_saved(&self) -> u64 {
         if self.cumulative_input_bytes > self.cumulative_output_bytes {
-            (self.cumulative_input_bytes - self.cumulative_output_bytes) / 4
+            crate::util::token_estimate::estimate_tokens(
+                (self.cumulative_input_bytes - self.cumulative_output_bytes) as usize,
+                crate::util::token_estimate::ContentHint::Mixed,
+            ) as u64
         } else {
             0
         }

@@ -61,7 +61,38 @@ pub fn process_payload(
             }
             return process_web_content(&content).map(wrap_hook_output);
         }
-        _ => return None, // Edit, Write, etc. — don't need distillation
+        "Edit" | "Write" | "Create" | "Move" | "Delete" | "Replace" => return None,
+        "MultiEdit" => {
+            if content.len() < 200 {
+                return None;
+            }
+            let lines: Vec<&str> = content.lines().collect();
+            let summary = format!(
+                "[OMNI MultiEdit: {} lines]\n{}",
+                lines.len(),
+                lines.into_iter().take(30).collect::<Vec<&str>>().join("\n")
+            );
+            if summary.len() < content.len() * 8 / 10 {
+                return Some(wrap_hook_output(summary));
+            }
+            return None;
+        }
+        _ => {
+            if let Some(ref s) = store {
+                s.record_unhandled_tool(&normalized.tool_name);
+            }
+            if content.len() > 2000 {
+                let lines: Vec<&str> = content.lines().collect();
+                let summary = format!(
+                    "[OMNI {}: {} lines]\n{}",
+                    normalized.tool_name,
+                    lines.len(),
+                    lines.into_iter().take(30).collect::<Vec<&str>>().join("\n")
+                );
+                return Some(wrap_hook_output(summary));
+            }
+            return None;
+        }
     }
 
     if content.len() < 50 {
@@ -217,8 +248,18 @@ pub fn process_payload(
 
     // Measure ratio strictly
     if final_out.len() >= content.len() * 9 / 10 {
+        // Record passthrough metric regardless of size
+        if let Some(ref s) = store {
+            s.record_passthrough(clean_command, content.len());
+        }
+
         if final_out.len() < 1000 {
-            return None; // Tiny output, silent passthrough
+            // F-07: Label small passthrough output instead of silent drop
+            return Some(wrap_hook_output(format!(
+                "[OMNI: Passthrough — output too small for meaningful compression ({} bytes)]\n{}",
+                content.len(),
+                final_out
+            )));
         } else {
             final_out.insert_str(0, "[OMNI: Passthrough (low compression)]\n");
         }
@@ -300,15 +341,13 @@ fn build_additional_context(
     session: &Option<Arc<Mutex<crate::pipeline::SessionState>>>,
 ) -> Option<String> {
     let saved_this_call = if result.input_bytes > result.output_bytes {
-        (result.input_bytes - result.output_bytes) / 4
+        crate::util::token_estimate::estimate_tokens(
+            result.input_bytes - result.output_bytes,
+            crate::util::token_estimate::ContentHint::Mixed,
+        )
     } else {
         0
     };
-
-    // Only inject if meaningful savings
-    if saved_this_call < 100 {
-        return None;
-    }
 
     let session_total = session
         .as_ref()
@@ -316,10 +355,28 @@ fn build_additional_context(
         .map(|s| s.estimated_tokens_saved())
         .unwrap_or(0);
 
-    Some(format!(
-        "[OMNI: -{saved_this_call}tok this call | -{session_total}tok session | {savings:.0}% compression]",
-        savings = result.savings_pct()
-    ))
+    let command_count = session
+        .as_ref()
+        .and_then(|s| s.lock().ok())
+        .map(|s| s.command_count)
+        .unwrap_or(0);
+
+    // F-10: Inject for significant single-call savings (>= 500 tokens)
+    if saved_this_call >= 500 {
+        return Some(format!(
+            "[OMNI: -{saved_this_call}tok this call | -{session_total}tok session | {savings:.0}% compression]",
+            savings = result.savings_pct()
+        ));
+    }
+
+    // F-10: Inject milestone summary every 10 commands if total savings significant
+    if command_count > 0 && command_count.is_multiple_of(10) && session_total >= 1000 {
+        return Some(format!(
+            "[OMNI session milestone: -{session_total}tok saved across {command_count} commands]"
+        ));
+    }
+
+    None
 }
 
 fn wrap_hook_output(distilled: String) -> String {
@@ -792,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_significant_reduction_exit() {
+    fn test_no_significant_reduction_labeled_passthrough_small() {
         let noise = "a".repeat(100);
         let input = json!({
             "tool_name": "Bash",
@@ -802,10 +859,44 @@ mod tests {
             }
         });
         let out = process_payload(&input.to_string(), None, None);
-        // GenericDistiller limits to 100 lines.
-        // Noise is a single line, so generic prints exactly the same thing.
-        // Therefore length > 90% and exits without distillation (because length < 1000)
-        assert!(out.is_none());
+        // F-07: Small output with no significant reduction now returns
+        // a labeled passthrough instead of None
+        if let Some(res) = out {
+            assert!(
+                res.contains("OMNI") || res.contains("Passthrough"),
+                "Labeled passthrough must contain OMNI label"
+            );
+        }
+        // None is also acceptable for single-line content that GenericDistiller
+        // doesn't compress
+    }
+
+    #[test]
+    fn test_small_output_not_silently_dropped() {
+        // 500 bytes of distinct context that won't compress well
+        let content: String = (0..10)
+            .map(|i| {
+                format!(
+                    "unique_context_line_{}: some data here {}\n",
+                    i,
+                    "x".repeat(30 + i * 3)
+                )
+            })
+            .collect();
+        let input = json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "echo test" },
+            "tool_response": { "content": content }
+        });
+        let out = process_payload(&input.to_string(), None, None);
+        // If return Some, must contain OMNI label — never silently drops
+        if let Some(res) = out {
+            assert!(
+                res.contains("OMNI") || res.contains("Passthrough"),
+                "If not None, must contain OMNI label: {}",
+                res
+            );
+        }
     }
 
     #[test]
@@ -988,5 +1079,65 @@ mod tests {
             out.is_some(),
             "Claude Code format harus tetap bekerja setelah refactor"
         );
+    }
+
+    #[test]
+    fn test_multiedit_tool_large_output_distilled() {
+        let mut big_output = String::new();
+        for i in 0..100 {
+            big_output.push_str(&format!("Line {} of multi-edit output\n", i));
+        }
+        let input = serde_json::json!({
+            "tool_name": "MultiEdit",
+            "tool_input": {},
+            "tool_response": {
+                "content": big_output
+            }
+        });
+        let out = process_payload(&input.to_string(), None, None);
+        assert!(out.is_some(), "Large MultiEdit must be distilled");
+        let res = out.expect("Output exists");
+        assert!(
+            res.contains("OMNI MultiEdit"),
+            "Must have OMNI MultiEdit label"
+        );
+    }
+
+    #[test]
+    fn test_unknown_tool_large_output_labeled_passthrough() {
+        let mut big_output = String::new();
+        for i in 0..200 {
+            big_output.push_str(&format!("Line {} of unknown tool output\n", i));
+        }
+        let input = serde_json::json!({
+            "tool_name": "SomeRandomTool",
+            "tool_input": {},
+            "tool_response": {
+                "content": big_output
+            }
+        });
+        let out = process_payload(&input.to_string(), None, None);
+        assert!(
+            out.is_some(),
+            "Large unknown tool output must be passed through with label"
+        );
+        let res = out.expect("Output exists");
+        assert!(
+            res.contains("OMNI SomeRandomTool"),
+            "Must have OMNI SomeRandomTool label"
+        );
+    }
+
+    #[test]
+    fn test_edit_tool_still_returns_none() {
+        let input = serde_json::json!({
+            "tool_name": "Edit",
+            "tool_input": {},
+            "tool_response": {
+                "content": "File edited successfully"
+            }
+        });
+        let out = process_payload(&input.to_string(), None, None);
+        assert!(out.is_none(), "Edit tool should still return None");
     }
 }

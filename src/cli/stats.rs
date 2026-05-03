@@ -1,4 +1,5 @@
 use crate::store::sqlite::Store;
+use crate::util::token_estimate::{ContentHint, estimate_tokens};
 use anyhow::Result;
 use colored::*;
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ pub fn format_bytes(n: u64) -> String {
 }
 
 pub fn format_tokens(bytes: u64) -> String {
-    let tokens = bytes / 4;
+    let tokens = estimate_tokens(bytes as usize, ContentHint::Mixed) as u64;
     if tokens < 1000 {
         format!("{}", tokens)
     } else if tokens < 1_000_000 {
@@ -44,9 +45,12 @@ fn format_bar_with_empty(pct: f64) -> String {
 }
 
 pub fn est_cost_usd(bytes_saved: u64) -> f64 {
+    est_cost_usd_with_hint(bytes_saved, ContentHint::Mixed)
+}
+
+pub fn est_cost_usd_with_hint(bytes_saved: u64, hint: ContentHint) -> f64 {
     let price = crate::guard::config::get_input_cost();
-    // ~4 chars per token
-    let tokens = bytes_saved as f64 / 4.0;
+    let tokens = estimate_tokens(bytes_saved as usize, hint) as f64;
     (tokens / 1_000_000.0) * price
 }
 
@@ -686,8 +690,8 @@ fn run_json(store: &Store) -> Result<()> {
     let periods_json: Vec<serde_json::Value> = periods
         .iter()
         .map(|(label, count, input, output)| {
-            let input_tokens = *input / 4;
-            let output_tokens = *output / 4;
+            let input_tokens = estimate_tokens(*input as usize, ContentHint::Mixed) as u64;
+            let output_tokens = estimate_tokens(*output as usize, ContentHint::Mixed) as u64;
             let savings_pct = if *input > 0 {
                 (100.0 * (1.0 - *output as f64 / *input as f64) * 10.0).round() / 10.0
             } else {
@@ -840,17 +844,17 @@ mod tests {
     #[test]
     fn test_format_tokens_ranges() {
         assert_eq!(format_tokens(0), "0");
-        assert_eq!(format_tokens(400), "100"); // 400 bytes / 4 = 100 tokens
-        assert_eq!(format_tokens(40_000), "10K"); // 10K tokens
-        assert_eq!(format_tokens(4_000_000), "1.0M"); // 1M tokens
+        assert_eq!(format_tokens(380), "100"); // 380 bytes / 3.8 = 100 tokens
+        assert_eq!(format_tokens(38_000), "10K"); // 10K tokens
+        assert_eq!(format_tokens(3_800_000), "1.0M"); // 1M tokens
     }
 
     #[test]
     fn test_est_cost_usd_kalkulasi_benar() {
-        let cost = est_cost_usd(4_000_000);
+        let cost = est_cost_usd(3_800_000); // 1M tokens
         assert!((cost - 3.0).abs() < 0.01);
 
-        let cost2 = est_cost_usd(400_000);
+        let cost2 = est_cost_usd(380_000); // 100k tokens
         assert!((cost2 - 0.30).abs() < 0.01);
 
         assert_eq!(est_cost_usd(0), 0.0);

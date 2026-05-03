@@ -8,6 +8,7 @@ mod paths;
 pub mod pipeline;
 mod session;
 mod store;
+mod util;
 
 use colored::*;
 use std::env;
