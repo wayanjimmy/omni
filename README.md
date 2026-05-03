@@ -192,6 +192,7 @@ enable_readfile_distillation = false
 **For Users:**
 - [The Ultimate Guide (HOW_TO_USE.md)](docs/HOW_TO_USE.md) — Everything you need: Installation, `omni learn`, Custom TOML Filters, and CLI Commands.
 - [OpenClaw Integration](https://clawhub.ai/fajarhide/omni-signal-engine) — Official OpenClaw plugin for native OMNI distillation. Install: `openclaw plugins install clawhub:@fajarhide/omni-signal-engine`
+- [Hermes Agent Integration](https://github.com/wysie/hermes-omni-plugin) — Community Hermes Agent plugin for native OMNI distillation. Install: `uv pip install --python ~/.hermes/hermes-agent/venv/bin/python git+https://github.com/wysie/hermes-omni-plugin.git`
 
 **For Developers & System Integrators:**
 - [Development Guide](docs/DEVELOPMENT.md) — How to build and contribute to the OMNI codebase.
