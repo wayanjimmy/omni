@@ -6,6 +6,8 @@ pub mod database;
 pub mod generic;
 pub mod git;
 pub mod jsts;
+pub mod readfile;
+pub mod search;
 pub mod security;
 pub mod system_ops;
 pub mod test;
