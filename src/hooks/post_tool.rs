@@ -228,9 +228,25 @@ pub fn process_payload(
         }
     }
 
-    // Determine Route based on agent config thresholds
+    // Determine Route based on agent config thresholds + adaptive retrieve rate
     let ratio = 1.0 - (final_out.len() as f32 / content.len().max(1) as f32);
-    let (keep_threshold, soft_threshold) = agent_config.route_thresholds();
+    let (mut keep_threshold, mut soft_threshold) = agent_config.route_thresholds();
+
+    // Adaptive compression: if agents often retrieve full output for this command,
+    // reduce compression aggressiveness by lowering thresholds
+    let cmd_family = crate::util::command_family::command_family(clean_command);
+    if let Some(ref s) = store {
+        let retrieve_rate = s.get_retrieve_rate(&cmd_family, 7);
+        if retrieve_rate > 0.25 {
+            // High retrieve rate — significantly softer compression
+            keep_threshold = (keep_threshold - 0.15).max(0.1);
+            soft_threshold = (soft_threshold - 0.10).max(0.05);
+        } else if retrieve_rate > 0.05 {
+            // Moderate retrieve rate — slightly softer
+            keep_threshold = (keep_threshold - 0.05).max(0.15);
+            soft_threshold = (soft_threshold - 0.03).max(0.08);
+        }
+    }
 
     let route = if !rewind_hash.is_empty() {
         Route::Rewind

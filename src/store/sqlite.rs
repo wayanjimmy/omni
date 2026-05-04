@@ -216,6 +216,22 @@ impl Store {
                 state_json   TEXT DEFAULT '{}'
             );
 
+            -- 1b. Passthrough events telemetry
+            CREATE TABLE IF NOT EXISTS passthrough_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                command      TEXT NOT NULL,
+                bytes        INTEGER NOT NULL,
+                ts           INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pt_ts ON passthrough_events(ts);
+
+            -- 1c. Unhandled tools telemetry
+            CREATE TABLE IF NOT EXISTS unhandled_tools (
+                tool_name    TEXT PRIMARY KEY,
+                count        INTEGER DEFAULT 1,
+                last_seen    INTEGER NOT NULL
+            );
+
             -- 2. Distillation tracking
             CREATE TABLE IF NOT EXISTS distillations (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -481,12 +497,29 @@ impl Store {
         }
     }
 
-    pub fn record_unhandled_tool(&self, _tool_name: &str) {
-        // TODO: implement
+    pub fn record_unhandled_tool(&self, tool_name: &str) {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let now = chrono::Utc::now().timestamp();
+        let _ = conn.execute(
+            "INSERT INTO unhandled_tools (tool_name, count, last_seen) VALUES (?1, 1, ?2)
+             ON CONFLICT(tool_name) DO UPDATE SET count = count + 1, last_seen = excluded.last_seen",
+            params![tool_name, now],
+        );
     }
 
-    pub fn record_passthrough(&self, _command: &str, _bytes: usize) {
-        // TODO: implement passthrough telemetry
+    pub fn record_passthrough(&self, command: &str, bytes: usize) {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let now = chrono::Utc::now().timestamp();
+        let _ = conn.execute(
+            "INSERT INTO passthrough_events (command, bytes, ts) VALUES (?1, ?2, ?3)",
+            params![command, bytes as i64, now],
+        );
     }
 
     pub fn store_rewind(&self, content: &str) -> String {

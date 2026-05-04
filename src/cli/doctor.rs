@@ -254,6 +254,28 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         built_in.filters.len().to_string().yellow()
     );
 
+    let built_in_tests = crate::pipeline::toml_filter::run_inline_tests(&built_in.filters);
+    if built_in_tests.failures.is_empty() {
+        println!(
+            "   {:<15} {} inline tests {}",
+            "Filter tests:".bright_black(),
+            built_in_tests.passes.to_string().yellow(),
+            "[OK]".green().bold()
+        );
+    } else {
+        println!(
+            "   {:<15} {} failures {}",
+            "Filter tests:".bright_black(),
+            built_in_tests.failures.len().to_string().red(),
+            "[ERROR]".red().bold()
+        );
+        for failure in built_in_tests.failures.iter().take(3) {
+            println!("   {:<15} {}", "Failure:".red().bold(), failure.bright_black());
+        }
+        warnings.push("Built-in TOML filter inline tests failed.".to_string());
+        all_ok = false;
+    }
+
     let user_dir = conf_dir.join("filters");
     if user_dir.exists() {
         println!(

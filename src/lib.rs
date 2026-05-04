@@ -11,3 +11,4 @@ pub mod pipeline;
 pub mod session;
 pub mod store;
 pub mod util;
+pub mod graph;

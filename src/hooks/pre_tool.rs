@@ -62,7 +62,39 @@ fn process_payload(input_str: &str) -> Option<String> {
         return serde_json::to_string(&output).ok();
     }
 
+    // Conservative Context Injection Hint for Read/Search commands
+    if let Some(target_file) = extract_target_file(cmd_str) {
+        // We only provide a hint, we don't modify the command
+        let updated_input = parsed.tool_input.clone();
+        let reason = format!("OMNI context available for {}; call omni_context if needed", target_file);
+
+        let output = PreHookOutput {
+            hook_specific_output: HookSpecificOutput {
+                hook_event_name: "PreToolUse",
+                permission_decision: "allow",
+                permission_decision_reason: reason,
+                updated_input,
+            },
+        };
+        return serde_json::to_string(&output).ok();
+    }
+
     None
+}
+
+fn extract_target_file(cmd: &str) -> Option<String> {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    match parts[0] {
+        "cat" | "head" | "tail" => parts.get(1).map(|s| s.to_string()),
+        "grep" | "rg" => {
+            // Very naive extraction, just grabs the last argument if it doesn't look like a flag
+            parts.last().filter(|s| !s.starts_with('-')).map(|s| s.to_string())
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -81,6 +113,21 @@ mod tests {
 
         let output = process_payload(&input).expect("Should rewrite");
         assert!(output.contains("exec git status"));
+        assert!(output.contains("PreToolUse"));
+        assert!(output.contains("allow"));
+    }
+
+    #[test]
+    fn test_pre_hook_context_hint_for_cat() {
+        let input = json!({
+            "tool_input": {
+                "command": "cat src/main.rs"
+            }
+        })
+        .to_string();
+
+        let output = process_payload(&input).expect("Should inject context");
+        assert!(output.contains("OMNI context available for src/main.rs"));
         assert!(output.contains("PreToolUse"));
         assert!(output.contains("allow"));
     }
