@@ -380,6 +380,88 @@ impl OmniServer {
     }
 
     #[tool(
+        name = "omni_explain_savings",
+        description = "Explain why recent commands were compressed: shows route, filter, input/output bytes, and savings %"
+    )]
+    pub async fn omni_explain_savings(&self, #[tool(param)] limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(10).min(50) as usize;
+        let session_id = self
+            .session
+            .lock()
+            .ok()
+            .map(|s| s.session_id.clone())
+            .unwrap_or_default();
+        let rows = self.store.get_recent_distillations(&session_id, limit);
+        if rows.is_empty() {
+            return "No recent distillations found in current session.".to_string();
+        }
+        let mut out = format!(
+            "OMNI Savings Explanation (last {} commands):\n\n",
+            rows.len()
+        );
+        for d in &rows {
+            let pct = if d.input_bytes > 0 {
+                100.0 - (d.output_bytes as f64 / d.input_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+            let filter_display = if !d.filter_name.is_empty() {
+                format!(" [filter: {}]", d.filter_name)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "- {}: {} → {} bytes ({:.0}% saved)\n  Route: {}{}\n",
+                d.command, d.input_bytes, d.output_bytes, pct, d.route, filter_display
+            ));
+        }
+        out
+    }
+
+    #[tool(
+        name = "omni_find_noise",
+        description = "Analyze recent raw terminal traces to identify repetitive noisy patterns and suggest TOML filters"
+    )]
+    pub async fn omni_find_noise(&self, #[tool(param)] limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(50).min(200) as usize;
+        let traces = match self.store.get_recent_traces(limit) {
+            Ok(t) => t,
+            Err(_) => return "Failed to retrieve recent traces.".to_string(),
+        };
+        if traces.is_empty() {
+            return "No recent traces found.".to_string();
+        }
+        let mut concatenated_raw = String::new();
+        for (_, _, raw, _) in &traces {
+            concatenated_raw.push_str(raw);
+            concatenated_raw.push('\n');
+        }
+        let patterns = crate::session::learn::detect_patterns(&concatenated_raw);
+        if patterns.is_empty() {
+            return "No dominant noisy patterns detected in recent traces.".to_string();
+        }
+        let toml_snippet = crate::session::learn::generate_toml(&patterns, "omni_auto_noise", None);
+        let mut out = format!(
+            "OMNI Noise Analysis (from {} recent traces):\n\n",
+            traces.len()
+        );
+        out.push_str("Identified repetitive patterns:\n");
+        for (i, p) in patterns.iter().take(5).enumerate() {
+            out.push_str(&format!(
+                "{}. Prefix: '{}' (count: {}, conf: {:.2})\n",
+                i + 1,
+                p.trigger_prefix,
+                p.count,
+                p.confidence
+            ));
+        }
+        out.push_str("\nSuggested TOML Filter (add to ~/.omni/filters/user.toml):\n\n```toml\n");
+        out.push_str(&toml_snippet);
+        out.push_str("\n```");
+        out
+    }
+
+    #[tool(
         name = "omni_budget",
         description = "Show estimated token budget usage and compression efficiency for this session"
     )]
@@ -556,6 +638,8 @@ impl ServerHandler for OmniServer {
                 "omni_session" => Self::omni_session_tool_call(tcc).await,
                 "omni_search" => Self::omni_search_tool_call(tcc).await,
                 "omni_history" => Self::omni_history_tool_call(tcc).await,
+                "omni_explain_savings" => Self::omni_explain_savings_tool_call(tcc).await,
+                "omni_find_noise" => Self::omni_find_noise_tool_call(tcc).await,
                 "omni_budget" => Self::omni_budget_tool_call(tcc).await,
                 "omni_agents" => Self::omni_agents_tool_call(tcc).await,
                 "omni_knowledge" => Self::omni_knowledge_tool_call(tcc).await,
@@ -587,6 +671,8 @@ impl ServerHandler for OmniServer {
                     Self::omni_session_tool_attr(),
                     Self::omni_search_tool_attr(),
                     Self::omni_history_tool_attr(),
+                    Self::omni_explain_savings_tool_attr(),
+                    Self::omni_find_noise_tool_attr(),
                     Self::omni_budget_tool_attr(),
                     Self::omni_agents_tool_attr(),
                     Self::omni_knowledge_tool_attr(),
