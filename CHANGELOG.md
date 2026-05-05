@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7-rc2] - 2026-05-06
+
+### Added
+- **Lightweight Anti-Hallucination Guards**: Added factual warnings when OMNI knows context is incomplete, including heavy-compression-without-rewind cases and high-impact file reads with many dependents.
+- **ReadFile Dependency Context**: `ReadFile` distillation now surfaces dependency impact using graph-derived `imported_by` counts so agents know when a file change may have broad blast radius.
+- **Hot File Mutation Warnings**: `PreToolUse` now warns before mutating commands touch files that are already hot in current session context.
+
+### Improved
+- **Graceful ReadFile Fallback**: `post_tool` now falls back to base `distill_readfile` flow when graph indexing is unavailable instead of dropping contextual file distillation entirely.
+- **Doctor Auto-Repair Coverage**: Agent diagnostics continue to auto-repair missing integrations while preserving stronger validation for installed MCP entries.
+- **Cursor MCP Validation**: Refactored Cursor integration checks around structured JSON validation and idempotent install/remove behavior for `~/.cursor/mcp.json`.
+- **Code Quality**: Resolved fresh Clippy warnings, including regex construction in loops and nested conditional lint violations, while keeping fallback paths architecturally live.
+
+### Fixed
+- **ReadFile Wrapper Regression**: Restored legitimate `distill_readfile` usage through real fallback path instead of silencing dead-code warnings by removal.
+- **Context Warning Reliability**: Fixed hook pipeline paths so anti-hallucination warnings only emit from factual runtime signals already known by OMNI.
+
 ## [0.5.7-rc1] - 2026-05-03
 
 ### Added
