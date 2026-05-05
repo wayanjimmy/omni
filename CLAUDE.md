@@ -7,7 +7,7 @@ This file is for AI assistants (Claude, Codex, etc.) and human contributors work
 ```bash
 cargo build              # Build debug binary
 cargo build --release    # Build release binary
-cargo test               # Run all tests (147 tests)
+cargo test               # Run all tests
 cargo test <module>      # Run specific module tests
 cargo insta review       # Review snapshot test changes
 cargo clippy             # Lint
@@ -18,45 +18,34 @@ cargo fmt                # Format
 
 ```
 src/
-├── main.rs              # CLI dispatch (Mode enum → match)
+├── main.rs              # CLI dispatch
 ├── lib.rs               # Library re-exports for integration tests
-├── pipeline/
-│   ├── mod.rs           # Core types: OutputSegment, DistillResult, SessionState
-│   ├── registry.rs      # Stage 1: Pipeline profiles and command matching
-│   ├── scorer.rs        # Stage 2: Semantic signal scoring with context boost
-│   └── toml_filter.rs   # TOML filter engine (user-defined filters)
-├── distillers/
-│   ├── mod.rs           # Distiller trait + dispatch + snapshot tests
-│   ├── git.rs           # GitDiff/Status/Log distiller
-│   ├── build.rs         # Build output distiller
-│   ├── test.rs          # Test output distiller
-│   ├── infra.rs         # kubectl/docker/terraform distiller
-│   ├── log.rs           # Log file distiller
-│   ├── tabular.rs       # Tabular data distiller
-│   └── generic.rs       # Fallback distiller
-├── hooks/
-│   ├── dispatcher.rs    # Universal hook router (PostToolUse/SessionStart/PreCompact)
-│   ├── post_tool.rs     # PostToolUse: classify → score → compose
-│   ├── session_start.rs # SessionStart: inject session context
-│   ├── pre_compact.rs   # PreCompact: save state before compaction
-│   └── pipe.rs          # Stdin pipe mode (cmd | omni)
-├── store/
-│   └── sqlite.rs        # SQLite persistence (sessions, distillations, rewind, FTS5)
-├── session/
-│   ├── tracker.rs       # Background session context tracking
-│   └── learn.rs         # Auto-learn pattern detection
-├── guard/
-│   ├── env.rs           # Environment variable denylist
-│   ├── limits.rs        # Input size limits
-│   └── trust.rs         # SHA-256 project trust boundary
-├── mcp/
-│   └── server.rs        # MCP server (5 tools: retrieve, learn, density, trust, compress)
-└── cli/
-    ├── init.rs          # omni init
-    ├── stats.rs         # omni stats analytics dashboard
-    ├── session.rs       # omni session state inspection
-    ├── learn.rs         # omni learn CLI
-    └── doctor.rs        # omni doctor diagnostics
+├── paths.rs             # Path resolution and discovery
+├── agents/              # Multi-agent support (Claude, Cursor, Copilot, etc.)
+├── cli/                 # Command-line interfaces
+│   ├── init.rs, stats.rs, doctor.rs, learn.rs, session.rs
+│   └── diff.rs, exec.rs, optimize.rs, reset.rs, rewind.rs, rewrite.rs, update.rs
+├── distillers/          # Content filtering logic by type
+│   ├── git.rs, build.rs, test.rs, cloud.rs, database.rs, jsts.rs
+│   └── readfile.rs, search.rs, security.rs, system_ops.rs, vcs.rs
+├── graph/               # Code graph indexing
+│   └── indexer.rs
+├── guard/               # Safety, security, limits, and trust bounds
+│   ├── config.rs, env.rs, limits.rs, trust.rs, update.rs
+├── hooks/               # Pipeline execution hooks
+│   ├── dispatcher.rs    # Universal hook router
+│   ├── pre_tool.rs, post_tool.rs, post_tool_failure.rs
+│   └── session_start.rs, session_end.rs, pre_compact.rs, pipe.rs
+├── mcp/                 # Model Context Protocol
+│   └── server.rs        # MCP server tools
+├── pipeline/            # Core processing pipeline
+│   ├── analyzer.rs, collapse.rs, registry.rs, scorer.rs, toml_filter.rs
+├── session/             # Session tracking and learning
+│   ├── tracker.rs, learn.rs, correction.rs
+├── store/               # Persistence layer
+│   └── sqlite.rs, transcript.rs
+└── util/                # Common utilities
+    └── command_family.rs, token_estimate.rs
 ```
 
 ## Pipeline Architecture
@@ -83,8 +72,8 @@ Input (raw tool output)
 ┌─────────────────────────────────────────────┐
 │ Stage 3: Distiller                          │
 │ distillers::distill_with_command(...)       │
-│ → (output_string, Option<rewind_hash>)      │
-│ Filters noise + Archives to RewindStore     │
+│ → output_string                             │
+│ Filters noise                               │
 └─────────────┬───────────────────────────────┘
               │
               ▼
@@ -150,10 +139,16 @@ Verify with: `omni learn --verify`
 ## Database Schema
 
 - **sessions**: Session state (id, timestamps, task/domain hints, state JSON)
-- **distillations**: Every distillation event (filter, type, bytes in/out, route, score, latency)
+- **distillations**: Every distillation event (filter, input/output bytes, route, score, latency, agent_id)
 - **file_access**: Hot file tracking per session
 - **rewind_store**: Compressed content (SHA-256 hash → content, with retrieval counter)
 - **session_events (FTS5)**: Full-text searchable event index
+- **passthrough_events**: Telemetry for commands that bypass the pipeline
+- **unhandled_tools**: Telemetry for tools that OMNI doesn't yet support natively
+- **execution_traces**: Execution traces containing raw input and distilled output per command
+- **session_summaries**: Summarized metrics per session
+- **project_knowledge**: Cross-session semantic memory and knowledge
+- **agent_sessions**: Shared state tracking across multiple agents
 
 ## Cross-Platform OS Best Practices
 
