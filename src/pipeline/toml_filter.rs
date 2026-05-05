@@ -432,8 +432,7 @@ pub fn try_repair_file(path: &Path) -> Result<bool> {
             let rest = &repaired[m.end()..];
             let next_header_idx = rest.find("\n[filters.").unwrap_or(rest.len());
             let block = &rest[..next_header_idx];
-            let has_match_command = Regex::new(r"(?m)^\s*match_command\s*=")?
-                .is_match(block);
+            let has_match_command = Regex::new(r"(?m)^\s*match_command\s*=")?.is_match(block);
             if !has_match_command {
                 out.push_str("match_command = \"^$\"\n");
                 changed = true;

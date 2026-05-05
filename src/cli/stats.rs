@@ -335,7 +335,7 @@ fn run_default(store: &Store) -> Result<()> {
             };
             let bar = format_bar_with_empty(pct);
             println!(
-                "    {:<14} {}  {:>5.1}%  ({:>3}x)  {:>5.1}% saved",
+                "    {:<18} {}  {:>5.1}%  ({:>3}x)  {:>5.1}% saved",
                 name.bright_cyan(),
                 bar.bright_blue(),
                 pct,
@@ -492,7 +492,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
     if !display_filters.is_empty() {
         println!("\n {}", "By Command:".bold().bright_white());
         println!(
-            "   {}  {:<22} {:<13} {:>5} {:>8}  {}",
+            "   {}  {:<20} {:<12} {:>4} {:>7}  {}",
             "#".bright_black(),
             "CLI".bright_black(),
             "Agent".bright_black(),
@@ -535,7 +535,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
                 .unwrap_or("—");
 
             println!(
-                "  {:>2}. {:<22} {:<13} {:>4}x  {:>6.1}%  {}{}",
+                "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {}{}",
                 i + 1,
                 display_name.bright_cyan(),
                 agent_label.bright_blue(),
@@ -782,10 +782,10 @@ fn run_project_stats(args: &[String], store: &Store) -> Result<()> {
     }
 
     println!(
-        "  {:<30} {:>7} {:>9}  Signal Strength",
+        " {:<28} {:>9} {:>10}  Signal Strength",
         "Project Directory", "Count", "Savings"
     );
-    println!("  ── {:─<30} ─────── ───────── ────────────────────", "");
+    println!(" {:─<32} ─────── ───────── ────────────────────", "");
 
     for (path, count, savings) in projects {
         let display_path = if path.chars().count() > 30 {
@@ -814,7 +814,7 @@ fn run_project_stats(args: &[String], store: &Store) -> Result<()> {
         };
 
         println!(
-            "  {:<30} {:>6}x  {:>7.1}%  {}",
+            " {:<28} {:>8}x  {:>7.1}%  {}",
             display_path.cyan(),
             count,
             savings,
