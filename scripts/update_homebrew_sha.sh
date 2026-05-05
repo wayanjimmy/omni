@@ -101,6 +101,6 @@ echo "📦 Committing updated omni.rb to local repository..."
 git add omni.rb
 git commit -m "chore: update formula SHA-256 for v$VERSION" || echo "No changes to commit in local repo"
 # Uncomment if you want it to push automatically:
-# git push origin main
+git push origin main
 
 echo "🎉 OMNI v$VERSION formula update complete!"
