@@ -21,6 +21,15 @@ impl OmniServer {
     )]
     pub async fn omni_retrieve(&self, #[tool(param)] hash: String) -> String {
         if let Some(content) = self.store.retrieve_rewind(&hash) {
+            // Record retrieve event for adaptive compression feedback loop
+            let cmd_prefix = self
+                .store
+                .find_command_for_hash(&hash)
+                .unwrap_or_else(|| "unknown".to_string());
+            let agent_id = std::env::var("OMNI_AGENT_ID")
+                .unwrap_or_else(|_| crate::agents::multiagent::detect_agent_id());
+            let family = crate::util::command_family::command_family(&cmd_prefix);
+            self.store.record_retrieve_event(&family, &hash, &agent_id);
             content
         } else {
             format!("Not found: {}", hash)
@@ -147,6 +156,67 @@ impl OmniServer {
             Ok(hash) => format!("Trusted: {}\nSHA-256: {}", path.display(), hash),
             Err(e) => format!("Failed to trust local hashes ensuring sandbox loops: {}", e),
         }
+    }
+
+    #[tool(
+        name = "omni_context",
+        description = "Show lightweight dependency context for a file"
+    )]
+    pub async fn omni_context(&self, #[tool(param)] file_path: String) -> String {
+        if file_path.trim().is_empty() {
+            return "Please provide a file_path".to_string();
+        }
+
+        let cwd = match std::env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(e) => return format!("Cannot determine current directory: {}", e),
+        };
+
+        let graph = match crate::graph::indexer::build_graph(&cwd) {
+            Ok(graph) => graph,
+            Err(e) => return format!("Failed to build graph context: {}", e),
+        };
+
+        let ctx = graph.context_for(&file_path);
+        let session = self.session.lock().ok().map(|s| s.clone());
+        let hot_count = session
+            .as_ref()
+            .and_then(|s| s.hot_files.get(&ctx.file_path).copied())
+            .unwrap_or(0);
+
+        let mut out = format!("OMNI Context for {}\n", ctx.file_path);
+        if ctx.imports.is_empty() {
+            out.push_str("Imports: none detected\n");
+        } else {
+            out.push_str(&format!(
+                "Imports: {}\n",
+                ctx.imports
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if ctx.imported_by.is_empty() {
+            out.push_str("Imported by: none detected\n");
+        } else {
+            out.push_str(&format!(
+                "Imported by: {}\n",
+                ctx.imported_by
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if hot_count > 0 {
+            out.push_str(&format!("Hot in session: yes ({}x)\n", hot_count));
+        } else {
+            out.push_str("Hot in session: no\n");
+        }
+        out
     }
 
     #[tool(
@@ -306,6 +376,88 @@ impl OmniServer {
             std::env::var("OMNI_AGENT_ID")
                 .unwrap_or_else(|_| crate::agents::multiagent::detect_agent_id())
         ));
+        out
+    }
+
+    #[tool(
+        name = "omni_explain_savings",
+        description = "Explain why recent commands were compressed: shows route, filter, input/output bytes, and savings %"
+    )]
+    pub async fn omni_explain_savings(&self, #[tool(param)] limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(10).min(50) as usize;
+        let session_id = self
+            .session
+            .lock()
+            .ok()
+            .map(|s| s.session_id.clone())
+            .unwrap_or_default();
+        let rows = self.store.get_recent_distillations(&session_id, limit);
+        if rows.is_empty() {
+            return "No recent distillations found in current session.".to_string();
+        }
+        let mut out = format!(
+            "OMNI Savings Explanation (last {} commands):\n\n",
+            rows.len()
+        );
+        for d in &rows {
+            let pct = if d.input_bytes > 0 {
+                100.0 - (d.output_bytes as f64 / d.input_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+            let filter_display = if !d.filter_name.is_empty() {
+                format!(" [filter: {}]", d.filter_name)
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                "- {}: {} → {} bytes ({:.0}% saved)\n  Route: {}{}\n",
+                d.command, d.input_bytes, d.output_bytes, pct, d.route, filter_display
+            ));
+        }
+        out
+    }
+
+    #[tool(
+        name = "omni_find_noise",
+        description = "Analyze recent raw terminal traces to identify repetitive noisy patterns and suggest TOML filters"
+    )]
+    pub async fn omni_find_noise(&self, #[tool(param)] limit: Option<u32>) -> String {
+        let limit = limit.unwrap_or(50).min(200) as usize;
+        let traces = match self.store.get_recent_traces(limit) {
+            Ok(t) => t,
+            Err(_) => return "Failed to retrieve recent traces.".to_string(),
+        };
+        if traces.is_empty() {
+            return "No recent traces found.".to_string();
+        }
+        let mut concatenated_raw = String::new();
+        for (_, _, raw, _) in &traces {
+            concatenated_raw.push_str(raw);
+            concatenated_raw.push('\n');
+        }
+        let patterns = crate::session::learn::detect_patterns(&concatenated_raw);
+        if patterns.is_empty() {
+            return "No dominant noisy patterns detected in recent traces.".to_string();
+        }
+        let toml_snippet = crate::session::learn::generate_toml(&patterns, "omni_auto_noise", None);
+        let mut out = format!(
+            "OMNI Noise Analysis (from {} recent traces):\n\n",
+            traces.len()
+        );
+        out.push_str("Identified repetitive patterns:\n");
+        for (i, p) in patterns.iter().take(5).enumerate() {
+            out.push_str(&format!(
+                "{}. Prefix: '{}' (count: {}, conf: {:.2})\n",
+                i + 1,
+                p.trigger_prefix,
+                p.count,
+                p.confidence
+            ));
+        }
+        out.push_str("\nSuggested TOML Filter (add to ~/.omni/filters/user.toml):\n\n```toml\n");
+        out.push_str(&toml_snippet);
+        out.push_str("\n```");
         out
     }
 
@@ -482,9 +634,12 @@ impl ServerHandler for OmniServer {
                 "omni_learn" => Self::omni_learn_tool_call(tcc).await,
                 "omni_density" => Self::omni_density_tool_call(tcc).await,
                 "omni_trust" => Self::omni_trust_tool_call(tcc).await,
+                "omni_context" => Self::omni_context_tool_call(tcc).await,
                 "omni_session" => Self::omni_session_tool_call(tcc).await,
                 "omni_search" => Self::omni_search_tool_call(tcc).await,
                 "omni_history" => Self::omni_history_tool_call(tcc).await,
+                "omni_explain_savings" => Self::omni_explain_savings_tool_call(tcc).await,
+                "omni_find_noise" => Self::omni_find_noise_tool_call(tcc).await,
                 "omni_budget" => Self::omni_budget_tool_call(tcc).await,
                 "omni_agents" => Self::omni_agents_tool_call(tcc).await,
                 "omni_knowledge" => Self::omni_knowledge_tool_call(tcc).await,
@@ -512,9 +667,12 @@ impl ServerHandler for OmniServer {
                     Self::omni_learn_tool_attr(),
                     Self::omni_density_tool_attr(),
                     Self::omni_trust_tool_attr(),
+                    Self::omni_context_tool_attr(),
                     Self::omni_session_tool_attr(),
                     Self::omni_search_tool_attr(),
                     Self::omni_history_tool_attr(),
+                    Self::omni_explain_savings_tool_attr(),
+                    Self::omni_find_noise_tool_attr(),
                     Self::omni_budget_tool_attr(),
                     Self::omni_agents_tool_attr(),
                     Self::omni_knowledge_tool_attr(),

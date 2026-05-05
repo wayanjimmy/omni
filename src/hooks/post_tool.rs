@@ -47,13 +47,30 @@ pub fn process_payload(
             } else {
                 &normalized.command
             };
-            return process_file_read(&content, filepath).map(wrap_hook_output);
+            // Phase 6: check graph for many dependents
+            let graph = std::env::current_dir()
+                .ok()
+                .and_then(|cwd| crate::graph::indexer::build_graph(&cwd).ok());
+
+            if let Some(g) = graph {
+                let imported_by_count = g.context_for(filepath).imported_by.len();
+                return crate::distillers::readfile::distill_readfile_with_context(
+                    &content,
+                    filepath,
+                    imported_by_count,
+                )
+                .map(wrap_hook_output);
+            }
+
+            // Fallback if graph fails
+            return crate::distillers::readfile::distill_readfile(&content, filepath)
+                .map(wrap_hook_output);
         }
         "Grep" => {
             if !agent_config.grep_enabled() {
                 return None;
             }
-            return process_grep_output(&content).map(wrap_hook_output);
+            return distill_grep(&content).map(wrap_hook_output);
         }
         "WebFetch" => {
             if !agent_config.webfetch_enabled() {
@@ -210,7 +227,24 @@ pub fn process_payload(
             ));
             rewind_hash = hash;
         } else {
-            final_out.push_str(&format!("\n[OMNI: {} lines omitted]\n", dropped_lines));
+            // Phase 6: factual guard — heavy compression but no rewind store available
+            final_out.push_str(&format!(
+                "\n[OMNI: {} lines omitted — WARNING: full output not saved (no store), recovery impossible]\n",
+                dropped_lines
+            ));
+        }
+    } else {
+        // Phase 6: heavy noise detected but not stored — warn if compression is significant
+        let noise_ratio = if !check_segments.is_empty() {
+            noise_count as f32 / check_segments.len() as f32
+        } else {
+            0.0
+        };
+        if noise_ratio > 0.6 && content.len() > 2000 {
+            final_out.push_str(&format!(
+                "\n[OMNI Guard: {:.0}% noise dropped, but full output not archived — recovery unavailable]\n",
+                noise_ratio * 100.0
+            ));
         }
     }
 
@@ -228,9 +262,25 @@ pub fn process_payload(
         }
     }
 
-    // Determine Route based on agent config thresholds
+    // Determine Route based on agent config thresholds + adaptive retrieve rate
     let ratio = 1.0 - (final_out.len() as f32 / content.len().max(1) as f32);
-    let (keep_threshold, soft_threshold) = agent_config.route_thresholds();
+    let (mut keep_threshold, mut soft_threshold) = agent_config.route_thresholds();
+
+    // Adaptive compression: if agents often retrieve full output for this command,
+    // reduce compression aggressiveness by lowering thresholds
+    let cmd_family = crate::util::command_family::command_family(clean_command);
+    if let Some(ref s) = store {
+        let retrieve_rate = s.get_retrieve_rate(&cmd_family, 7);
+        if retrieve_rate > 0.25 {
+            // High retrieve rate — significantly harder compression thresholds (require more compression to keep)
+            keep_threshold = (keep_threshold + 0.15).min(0.95);
+            soft_threshold = (soft_threshold + 0.10).min(0.85);
+        } else if retrieve_rate > 0.05 {
+            // Moderate retrieve rate — slightly harder thresholds
+            keep_threshold = (keep_threshold + 0.05).min(0.90);
+            soft_threshold = (soft_threshold + 0.03).min(0.80);
+        }
+    }
 
     let route = if !rewind_hash.is_empty() {
         Route::Rewind
@@ -392,285 +442,7 @@ fn wrap_hook_output(distilled: String) -> String {
 
 // ── NON-BASH TOOL DISTILLATION ───────────────────────────────────────
 
-fn process_file_read(content: &str, filepath: &str) -> Option<String> {
-    let line_count = content.lines().count();
-    if line_count < 50 {
-        return None; // Small files pass through
-    }
-
-    let ext = std::path::Path::new(filepath)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-
-    let distilled = match ext {
-        "rs" => distill_rust_file(content),
-        "py" => distill_python_file(content),
-        "ts" | "tsx" | "js" | "jsx" => distill_js_ts_file(content),
-        "go" => distill_go_file(content),
-        "java" | "kt" => distill_java_file(content),
-        "json" => distill_json_file(content),
-        "toml" | "yaml" | "yml" => distill_config_file(content, ext),
-        "log" | "txt" => distill_log_file(content),
-        _ => distill_unknown_file(content),
-    };
-
-    // Only return if meaningful compression achieved
-    if distilled.len() < content.len() * 8 / 10 {
-        Some(format!(
-            "[OMNI ReadFile: {} → distilled ({} lines)]\n{}",
-            filepath, line_count, distilled
-        ))
-    } else {
-        None
-    }
-}
-
-fn distill_rust_file(content: &str) -> String {
-    let mut out = String::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("pub fn ")
-            || trimmed.starts_with("pub async fn ")
-            || trimmed.starts_with("pub struct ")
-            || trimmed.starts_with("pub enum ")
-            || trimmed.starts_with("pub trait ")
-            || trimmed.starts_with("impl ")
-            || trimmed.starts_with("pub mod ")
-            || trimmed.starts_with("use ")
-            || trimmed.starts_with("//!")
-            || trimmed.contains("todo!")
-            || trimmed.contains("unimplemented!")
-            || trimmed.contains("panic!")
-        {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        distill_unknown_file(content)
-    } else {
-        out.trim().to_string()
-    }
-}
-
-fn distill_python_file(content: &str) -> String {
-    let mut out = String::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("def ")
-            || trimmed.starts_with("async def ")
-            || trimmed.starts_with("class ")
-            || trimmed.starts_with("import ")
-            || trimmed.starts_with("from ")
-            || trimmed.starts_with('@')
-        {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        distill_unknown_file(content)
-    } else {
-        out.trim().to_string()
-    }
-}
-
-fn distill_js_ts_file(content: &str) -> String {
-    let mut out = String::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("export ")
-            || trimmed.starts_with("function ")
-            || trimmed.starts_with("class ")
-            || trimmed.starts_with("interface ")
-            || trimmed.starts_with("type ")
-            || (trimmed.starts_with("const ") && trimmed.contains("=>"))
-            || trimmed.starts_with("import ")
-        {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        distill_unknown_file(content)
-    } else {
-        out.trim().to_string()
-    }
-}
-
-fn distill_go_file(content: &str) -> String {
-    let mut out = String::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("func ")
-            || trimmed.starts_with("type ")
-            || trimmed.starts_with("var ")
-            || trimmed.starts_with("const ")
-            || trimmed.starts_with("package ")
-            || trimmed.starts_with("import")
-        {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        distill_unknown_file(content)
-    } else {
-        out.trim().to_string()
-    }
-}
-
-fn distill_java_file(content: &str) -> String {
-    let mut out = String::new();
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if (trimmed.contains("class ")
-            || trimmed.contains("interface ")
-            || trimmed.contains("public ")
-            || trimmed.contains("private ")
-            || trimmed.contains("protected ")
-            || trimmed.starts_with("import ")
-            || trimmed.starts_with("package "))
-            && !trimmed.starts_with("//")
-            && !trimmed.is_empty()
-        {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        distill_unknown_file(content)
-    } else {
-        out.trim().to_string()
-    }
-}
-
-fn distill_json_file(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let total = lines.len();
-    if total <= 30 {
-        return content.trim().to_string();
-    }
-    let head: Vec<&str> = lines.iter().take(15).copied().collect();
-    format!(
-        "{}\n... [{} more lines — full JSON in RewindStore]",
-        head.join("\n"),
-        total - 15
-    )
-}
-
-fn distill_config_file(content: &str, ext: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let total = lines.len();
-    if total <= 40 {
-        return content.trim().to_string();
-    }
-    let mut out = String::new();
-    for line in &lines {
-        let trimmed = line.trim();
-        if (ext == "toml"
-            && (trimmed.starts_with('[')
-                || (!trimmed.starts_with('#')
-                    && trimmed.contains('=')
-                    && !trimmed.starts_with(' '))))
-            || (matches!(ext, "yaml" | "yml")
-                && !trimmed.starts_with(' ')
-                && !trimmed.starts_with('#')
-                && trimmed.ends_with(':'))
-        {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        distill_unknown_file(content)
-    } else {
-        format!("[Config structure — {} lines total]\n{}", total, out.trim())
-    }
-}
-
-fn distill_log_file(content: &str) -> String {
-    let mut errors = 0usize;
-    let mut warnings = 0usize;
-    let mut error_lines: Vec<String> = vec![];
-    for line in content.lines() {
-        let l = line.to_lowercase();
-        if l.contains("error") || l.contains("fatal") || l.contains("panic") {
-            errors += 1;
-            error_lines.push(line.to_string());
-        } else if l.contains("warn") {
-            warnings += 1;
-        }
-    }
-    let total = content.lines().count();
-    let mut out = format!(
-        "Log: {} errors, {} warnings ({} total lines)\n",
-        errors, warnings, total
-    );
-    for err in error_lines.iter().take(10) {
-        out.push_str(err);
-        out.push('\n');
-    }
-    if errors > 10 {
-        out.push_str(&format!("... [{} more error lines]\n", errors - 10));
-    }
-    out.trim().to_string()
-}
-
-fn distill_unknown_file(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-    let total = lines.len();
-    if total <= 30 {
-        return content.trim().to_string();
-    }
-    let head: Vec<&str> = lines.iter().take(15).copied().collect();
-    let tail: Vec<&&str> = lines.iter().rev().take(5).collect();
-    let tail_rev: Vec<&&str> = tail.into_iter().rev().collect();
-    format!(
-        "--- HEAD ({} total lines) ---\n{}\n... [{} lines omitted] ...\n--- TAIL ---\n{}",
-        total,
-        head.join("\n"),
-        total - 20,
-        tail_rev
-            .iter()
-            .map(|l| **l)
-            .collect::<Vec<&str>>()
-            .join("\n")
-    )
-}
-
-fn process_grep_output(content: &str) -> Option<String> {
-    let line_count = content.lines().count();
-    if line_count < 20 {
-        return None;
-    } // Small results pass through
-
-    let files: std::collections::HashSet<&str> = content
-        .lines()
-        .filter_map(|l| l.split(':').next())
-        .filter(|f| !f.is_empty())
-        .collect();
-    let file_count = files.len();
-    let top: Vec<&str> = content.lines().take(15).collect();
-    let summary = format!(
-        "[OMNI Grep: {} matches in {} files]\n{}{}",
-        line_count,
-        file_count,
-        top.join("\n"),
-        if line_count > 15 {
-            format!("\n... [{} more matches]", line_count - 15)
-        } else {
-            String::new()
-        }
-    );
-    if summary.len() < content.len() * 8 / 10 {
-        Some(summary)
-    } else {
-        None
-    }
-}
-
+use crate::distillers::search::distill_grep;
 fn process_web_content(content: &str) -> Option<String> {
     let line_count = content.lines().count();
     if line_count < 30 {

@@ -207,17 +207,36 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
                 rewinds.to_string().magenta()
             );
 
-            let (s_ts, r_ts) = store.latest_activity_timestamps().unwrap_or_default();
-            println!("\n {}", "Recent activity:".bold().bright_white());
-            if let Some(s) = s_ts {
-                println!("   Last session: {}", format_time_ago(s).bright_black());
+            let (_s_ts, r_ts) = store.latest_activity_timestamps().unwrap_or_default();
+
+            // Last distillation check: warn if no distillation in last 10 min
+            if let Some(rt) = r_ts {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                if now.saturating_sub(rt) > 600 {
+                    println!(
+                        "  {:<15} {} {} (run a noisy command to verify)",
+                        "Last distill:".bright_black(),
+                        format_time_ago(rt).bright_black(),
+                        "[IDLE]".yellow()
+                    );
+                } else {
+                    println!(
+                        "  {:<15} {} {}",
+                        "Last distill:".bright_black(),
+                        format_time_ago(rt).bright_black(),
+                        "[ACTIVE]".green().bold()
+                    );
+                }
             } else {
-                println!("   Last session: none");
-            }
-            if let Some(r) = r_ts {
-                println!("   Last distill: {}", format_time_ago(r).bright_black());
-            } else {
-                println!("   Last distill: none");
+                println!(
+                    "  {:<15} {} {}",
+                    "Last distill:".bright_black(),
+                    "never".bright_black(),
+                    "[IDLE]".yellow()
+                );
             }
         }
         Err(_) => {
@@ -239,12 +258,32 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     // 4. Agent Integrations
     println!("\n {}", "Agent Integrations:".bold().bright_white());
     let integrations = crate::agents::all_integrations();
+    let mut any_agent_ok = false;
     for agent in integrations {
-        all_ok &= agent.doctor_check(fix_mode, &mut warnings);
+        if agent.doctor_check(fix_mode, &mut warnings) {
+            any_agent_ok = true;
+        }
+        // Note: integrations are optional; "not configured" should not fail doctor
+    }
+    if !any_agent_ok {
+        warnings.push(
+            "No agent integrations are configured. Run `omni init` to set up hooks + MCP for your agent."
+                .to_string(),
+        );
+        all_ok = false;
     }
 
     // 6. Config Filters
     println!("\n {}", "Filters:".bold().bright_white());
+
+    // In --fix mode, repair legacy learned.toml *before* loading reports so warnings reflect fixes.
+    if fix_mode {
+        let learned_path = crate::paths::learned_filters_path();
+        if learned_path.exists() {
+            let _ = crate::pipeline::toml_filter::try_repair_file(&learned_path);
+        }
+    }
+
     let (built_in, user_report, local_report) =
         crate::pipeline::toml_filter::get_filters_by_source();
 
@@ -253,6 +292,32 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         "Built-in:".bright_black(),
         built_in.filters.len().to_string().yellow()
     );
+
+    let built_in_tests = crate::pipeline::toml_filter::run_inline_tests(&built_in.filters);
+    if built_in_tests.failures.is_empty() {
+        println!(
+            "   {:<15} {} inline tests {}",
+            "Filter tests:".bright_black(),
+            built_in_tests.passes.to_string().yellow(),
+            "[OK]".green().bold()
+        );
+    } else {
+        println!(
+            "   {:<15} {} failures {}",
+            "Filter tests:".bright_black(),
+            built_in_tests.failures.len().to_string().red(),
+            "[ERROR]".red().bold()
+        );
+        for failure in built_in_tests.failures.iter().take(3) {
+            println!(
+                "   {:<15} {}",
+                "Failure:".red().bold(),
+                failure.bright_black()
+            );
+        }
+        warnings.push("Built-in TOML filter inline tests failed.".to_string());
+        all_ok = false;
+    }
 
     let user_dir = conf_dir.join("filters");
     if user_dir.exists() {

@@ -365,30 +365,18 @@ fn persist<E: Write>(
             collapse_savings: result.collapse_savings,
         };
 
-        let agent_id = if std::env::var("OMNI_CMD").is_ok() {
-            "aider"
-        } else {
-            let detected = crate::agents::multiagent::detect_agent_id();
-            // If a specific agent was detected (not the default), use it.
-            // Otherwise, label as "terminal" for pipe-mode usage.
-            if detected != "claude_code" {
-                // Leak a static str for the borrow — agent_id set is small and bounded
-                Box::leak(detected.into_boxed_str())
-            } else {
-                "terminal"
-            }
-        };
+        let agent_id = resolve_pipe_agent_id();
         s.record_distillation(
             &result.session_id,
             &distill_result,
             command_name.unwrap_or(""),
             &result.project_path,
-            agent_id,
+            &agent_id,
         );
         s.record_trace(
             &result.session_id,
             command_name.unwrap_or(""),
-            agent_id,
+            &agent_id,
             &result.project_path,
             &result.input_text,
             result.best_output(),
@@ -438,6 +426,21 @@ fn persist<E: Write>(
             let _ = writeln!(error, "[omni:debug] transcript snapshot error: {}", e);
         }
     }
+}
+
+fn resolve_pipe_agent_id() -> String {
+    if let Ok(agent) = std::env::var("OMNI_AGENT_ID")
+        && !agent.trim().is_empty()
+    {
+        return agent;
+    }
+
+    if std::env::var("OMNI_CMD").is_ok() {
+        return "aider".to_string();
+    }
+
+    // Plain terminal pipe usage (e.g., `git diff | omni`) should stay terminal-scoped.
+    "terminal".to_string()
 }
 
 fn emit_output<W: Write, E: Write>(

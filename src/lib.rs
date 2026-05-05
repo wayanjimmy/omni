@@ -3,6 +3,7 @@
 pub mod agents;
 pub mod cli;
 pub mod distillers;
+pub mod graph;
 pub mod guard;
 pub mod hooks;
 pub mod mcp;

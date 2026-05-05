@@ -255,36 +255,58 @@ pub fn infer_task(session: &SessionState) -> Option<String> {
 
 pub fn infer_domain(session: &SessionState) -> Option<String> {
     let paths: Vec<String> = session.hot_files.keys().cloned().collect();
-    if paths.is_empty() || paths.len() < 2 {
-        if let Some(first) = paths.first()
-            && let Some(pos) = first.rfind('/')
-        {
-            return Some(first[..pos].to_string());
-        }
+    if paths.is_empty() {
         return None;
     }
 
-    let min_len = paths.iter().map(|p| p.len()).min().unwrap_or(0);
-    let mut prefix_len = 0;
+    // Prefer directories (paths containing '/'), because domain inference is about "where".
+    let dirs: Vec<String> = paths
+        .iter()
+        .filter_map(|p| p.rfind('/').map(|pos| p[..pos].to_string()))
+        .filter(|d| !d.is_empty())
+        .collect();
 
-    // We should compute common prefix bounded by characters
-    let first = &paths[0];
-    for r in 0..=min_len {
-        let prefix = &first[..r];
-        if paths.iter().all(|p| p.starts_with(prefix)) {
-            prefix_len = r;
-        } else {
-            break;
+    // 1) If we have enough directory information, infer from common directory prefix.
+    if dirs.len() >= 2 {
+        let min_len = dirs.iter().map(|p| p.len()).min().unwrap_or(0);
+        let mut prefix_len = 0;
+
+        let first = dirs[0].as_str();
+        for r in 0..=min_len {
+            let prefix = &first[..r];
+            if dirs.iter().all(|p| p.starts_with(prefix)) {
+                prefix_len = r;
+            } else {
+                break;
+            }
+        }
+
+        let common_prefix = &first[..prefix_len];
+        if common_prefix.is_empty() || common_prefix == "/" {
+            return None;
+        }
+
+        let parts: Vec<&str> = common_prefix.split('/').filter(|s| !s.is_empty()).collect();
+        return parts.last().map(|last| last.to_string());
+    }
+
+    // 2) Fallback: if we have a single directory, infer from its last segment.
+    if let Some(dir) = dirs.first() {
+        let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+        if let Some(last) = parts.last() {
+            return Some(last.to_string());
         }
     }
 
-    let common_prefix = &first[..prefix_len];
-    if common_prefix.is_empty() || common_prefix == "/" {
-        return None;
+    // 3) Last resort: hot files contain only basenames (no '/').
+    // Return basename without extension to avoid "not detected".
+    let first = paths.first().cloned()?;
+    let filename = first.rsplit('/').next().unwrap_or(&first);
+    if let Some((base, _ext)) = filename.rsplit_once('.') {
+        Some(base.to_string())
+    } else {
+        Some(filename.to_string())
     }
-
-    let parts: Vec<&str> = common_prefix.split('/').filter(|s| !s.is_empty()).collect();
-    parts.last().map(|last| last.to_string())
 }
 
 pub fn detect_js_toolchain(working_dir: &Path) -> Option<String> {
@@ -382,6 +404,20 @@ mod tests {
         // prefix -> "src/auth/"
         // split -> ["src", "auth"] -> last is "auth"
         assert_eq!(domain.unwrap(), "auth");
+    }
+
+    #[test]
+    fn test_infer_domain_fallback_when_only_basenames() {
+        let mut state = SessionState::new();
+        state.add_hot_file("jwt.rs");
+        state.add_hot_file("mod.rs");
+        state.add_hot_file("middleware.rs");
+
+        let domain = infer_domain(&state).unwrap();
+        assert!(
+            ["jwt", "mod", "middleware"].contains(&domain.as_str()),
+            "domain should be inferred from basename without returning None"
+        );
     }
 
     #[test]

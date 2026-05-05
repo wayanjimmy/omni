@@ -1,6 +1,7 @@
 pub mod agents;
 mod cli;
 mod distillers;
+mod graph;
 mod guard;
 mod hooks;
 mod mcp;
