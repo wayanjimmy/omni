@@ -341,6 +341,12 @@ impl Store {
                 PRIMARY KEY (agent_id, project_hash)
             );
             CREATE INDEX IF NOT EXISTS idx_as_project ON agent_sessions(project_hash);
+
+            -- 11. One-time data migrations tracker
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                id           TEXT PRIMARY KEY,
+                applied_at   INTEGER NOT NULL
+            );
             "#,
         )?;
 
@@ -409,6 +415,39 @@ impl Store {
             "ALTER TABLE distillations ADD COLUMN agent_id TEXT DEFAULT 'claude_code'",
             [],
         );
+
+        // One-time data migration:
+        // Older builds could attribute Cursor sessions as "vscode" because TERM_PROGRAM
+        // detection happened before explicit OMNI_AGENT_ID routing.
+        // Keep this migration idempotent and run only once.
+        let migration_id = "2026_05_cursor_agent_id_backfill_vscode_to_cursor";
+        let already_applied: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM schema_migrations WHERE id = ?1 LIMIT 1",
+                params![migration_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if already_applied.is_none() {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute(
+                "UPDATE distillations SET agent_id = 'cursor' WHERE agent_id = 'vscode'",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE execution_traces SET agent_id = 'cursor' WHERE agent_id = 'vscode'",
+                [],
+            )?;
+            tx.execute(
+                "UPDATE session_summaries SET agent_id = 'cursor' WHERE agent_id = 'vscode'",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO schema_migrations (id, applied_at) VALUES (?1, ?2)",
+                params![migration_id, chrono::Utc::now().timestamp()],
+            )?;
+            tx.commit()?;
+        }
 
         Ok(())
     }

@@ -486,8 +486,14 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
 
     // Per-command with agent info
     let cmd_agent_data = store
-        .get_per_command_with_agent(since, 30)
+        .get_per_command_with_agent(since, 200)
         .unwrap_or_default();
+    let mut cmd_agent_counts: HashMap<String, HashMap<String, u64>> = HashMap::new();
+    for (cmd, agent_id, calls, _, _) in &cmd_agent_data {
+        let key = shorten_command(cmd, 19);
+        let entry = cmd_agent_counts.entry(key).or_default();
+        *entry.entry(agent_id.clone()).or_insert(0) += *calls;
+    }
 
     if !display_filters.is_empty() {
         println!("\n {}", "By Command:".bold().bright_white());
@@ -527,12 +533,12 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
                 (*name).clone()
             };
 
-            // Find the most common agent for this command
-            let agent_label = cmd_agent_data
-                .iter()
-                .find(|(cmd, _, _, _, _)| shorten_command(cmd, 19) == display_name)
-                .map(|(_, aid, _, _, _)| agent_display_name(aid))
-                .unwrap_or("—");
+            // Pick the dominant agent for this command key by highest call count.
+            let agent_label = cmd_agent_counts
+                .get(&display_name)
+                .and_then(|agents| agents.iter().max_by_key(|(_, calls)| *calls))
+                .map(|(agent_id, _)| agent_display_name(agent_id))
+                .unwrap_or("unknown");
 
             println!(
                 "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {}{}",
