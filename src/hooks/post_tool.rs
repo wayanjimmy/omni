@@ -373,7 +373,8 @@ pub fn process_payload(
     }
 
     // Build additionalContext with token savings stats
-    let additional_context = build_additional_context(&result, &session);
+    let additional_context =
+        build_additional_context(&result, &session, &normalized.tool_name, &command);
 
     serde_json::to_string(&HookOutput {
         hook_specific_output: HookSpecificOutput {
@@ -389,12 +390,12 @@ pub fn process_payload(
 fn build_additional_context(
     result: &crate::pipeline::DistillResult,
     session: &Option<Arc<Mutex<crate::pipeline::SessionState>>>,
+    tool_name: &str,
+    command: &str,
 ) -> Option<String> {
     let saved_this_call = if result.input_bytes > result.output_bytes {
-        crate::util::token_estimate::estimate_tokens(
-            result.input_bytes - result.output_bytes,
-            crate::util::token_estimate::ContentHint::Mixed,
-        )
+        let hint = crate::util::token_estimate::detect_content_hint(tool_name, command);
+        crate::util::token_estimate::estimate_tokens(result.input_bytes - result.output_bytes, hint)
     } else {
         0
     };

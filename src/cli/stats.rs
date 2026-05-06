@@ -281,7 +281,7 @@ fn run_default(store: &Store) -> Result<()> {
         };
 
         println!(
-            "  {:<12} {:>3} commands │ {:>4} → {:<4} tokens │  {} │ ~${:.2}",
+            "  {:<12} {:>3} commands │ {:>4} → {:<4} tokens │  {} │ ~${:.2} USD",
             format!("{}:", label).bright_white().bold(),
             format_number(*count).cyan(),
             input_tokens.red(),
@@ -397,7 +397,6 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
         0.0
     };
     let bytes_saved = input_total.saturating_sub(output_total);
-    let cost_saved = est_cost_usd(bytes_saved);
     let (rewind_stored, rewind_retrieved) = store.rewind_metrics()?;
 
     println!();
@@ -421,6 +420,8 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
         format_bytes(output_total).green()
     );
 
+    let cost_saved = est_cost_usd(bytes_saved);
+
     let ratio_msg = format!("{:.1}% reduction", reduction_pct);
     let ratio_colored = if reduction_pct > 70.0 {
         ratio_msg.bold().bright_green()
@@ -433,7 +434,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
     println!(
         "  {:<20} {}",
         "Estimated Savings:".bright_black(),
-        format!("${:.3} USD", cost_saved).bold().bright_cyan()
+        format!("~${:.3} USD", cost_saved).bold().bright_cyan()
     );
     println!(
         "  {:<20} {}",
@@ -857,11 +858,13 @@ mod tests {
 
     #[test]
     fn test_est_cost_usd_kalkulasi_benar() {
+        let expected_price_per_m = (3.0 + 3.0 + 2.5) / 3.0; // ~2.833
+
         let cost = est_cost_usd(3_800_000); // 1M tokens
-        assert!((cost - 3.0).abs() < 0.01);
+        assert!((cost - expected_price_per_m).abs() < 0.01);
 
         let cost2 = est_cost_usd(380_000); // 100k tokens
-        assert!((cost2 - 0.30).abs() < 0.01);
+        assert!((cost2 - (expected_price_per_m * 0.1)).abs() < 0.01);
 
         assert_eq!(est_cost_usd(0), 0.0);
     }
