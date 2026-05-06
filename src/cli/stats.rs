@@ -281,7 +281,7 @@ fn run_default(store: &Store) -> Result<()> {
         };
 
         println!(
-            "  {:<12} {:>3} commands │ {:>4} → {:<4} tokens │  {} │ ~${:.2}",
+            "  {:<12} {:>3} commands │ {:>4} → {:<4} tokens │  {} │ ~${:.2} USD",
             format!("{}:", label).bright_white().bold(),
             format_number(*count).cyan(),
             input_tokens.red(),
