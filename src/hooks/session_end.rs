@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 struct HookInput {
     #[serde(rename = "hookEventName")]
     hook_event_name: String,
-    #[allow(dead_code)]
     #[serde(rename = "sessionId", default)]
     session_id: String,
     #[serde(rename = "exitReason", default)]
@@ -30,6 +29,11 @@ pub fn process_payload(
         Ok(s) => s.clone(),
         Err(e) => e.into_inner().clone(),
     };
+
+    if !parsed.session_id.is_empty() && parsed.session_id != state.session_id {
+        // Validation failure: prevents archiving a session under the wrong ID
+        return None;
+    }
 
     let exit_reason = if parsed.exit_reason.is_empty() {
         "normal"
