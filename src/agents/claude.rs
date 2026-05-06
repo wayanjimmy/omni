@@ -39,6 +39,66 @@ impl AgentIntegration for ClaudeIntegration {
     }
 
     fn uninstall(&self) -> anyhow::Result<()> {
+        let settings_path = get_settings_path();
+        if settings_path.exists() {
+            let content = fs::read_to_string(&settings_path)?;
+            if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                remove_omni_hooks(&mut val);
+                fs::write(&settings_path, serde_json::to_string_pretty(&val)?)?;
+                println!(
+                    "  {} Removed Hooks from Claude settings",
+                    "✓".yellow()
+                );
+            }
+        }
+
+        let mcp_path = get_claude_json_path();
+        if mcp_path.exists() {
+            let content = fs::read_to_string(&mcp_path)?;
+            if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                let mut changed = false;
+
+                if let Some(obj) = val.as_object_mut() {
+                    if let Some(servers) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+                        if servers.remove("omni").is_some() {
+                            changed = true;
+                        }
+                    }
+
+                    if let Some(projects) = obj.get_mut("projects").and_then(|p| p.as_object_mut()) {
+                        for (_, p_val) in projects.iter_mut() {
+                            if let Some(ps) = p_val.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+                                if ps.remove("omni").is_some() {
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+
+                    let top_level_keys: Vec<String> = obj.keys().cloned().collect();
+                    for key in top_level_keys {
+                        if key != "mcpServers" && key != "projects" {
+                            if let Some(inner_obj) = obj.get_mut(&key).and_then(|v| v.as_object_mut()) {
+                                if let Some(ps) = inner_obj.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+                                    if ps.remove("omni").is_some() {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if changed {
+                    fs::write(&mcp_path, serde_json::to_string_pretty(&val)?)?;
+                    println!(
+                        "  {} Removed MCP Server from .claude.json",
+                        "✓".yellow()
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
