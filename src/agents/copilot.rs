@@ -6,6 +6,14 @@ use std::path::PathBuf;
 
 pub struct CopilotIntegration;
 
+impl CopilotIntegration {
+    fn config_path() -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".copilot/mcp-config.json")
+    }
+}
+
 impl AgentIntegration for CopilotIntegration {
     fn id(&self) -> &'static str {
         "copilot"
@@ -16,9 +24,7 @@ impl AgentIntegration for CopilotIntegration {
     }
 
     fn install(&self, exe_path: &str) -> anyhow::Result<()> {
-        let settings_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".copilot/mcp-config.json");
+        let settings_path = Self::config_path();
 
         if let Some(parent) = settings_path.parent() {
             fs::create_dir_all(parent)?;
@@ -37,9 +43,9 @@ impl AgentIntegration for CopilotIntegration {
                 servers.insert(
                     "omni".to_string(),
                     json!({
+                        "type": "stdio",
                         "command": exe_path,
                         "args": ["--mcp"],
-                        "type": "stdio",
                         "env": {
                             "OMNI_AGENT_ID": "copilot"
                         }
@@ -57,9 +63,7 @@ impl AgentIntegration for CopilotIntegration {
     }
 
     fn uninstall(&self) -> anyhow::Result<()> {
-        let settings_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".copilot/mcp-config.json");
+        let settings_path = Self::config_path();
 
         if !settings_path.exists() {
             return Ok(());
@@ -84,10 +88,8 @@ impl AgentIntegration for CopilotIntegration {
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
-        let settings_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".copilot/mcp-config.json");
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
+        let settings_path = Self::config_path();
 
         println!("\n  {}", "Copilot CLI:".cyan());
         if settings_path.exists()
@@ -102,11 +104,24 @@ impl AgentIntegration for CopilotIntegration {
                 "[OK]".green().bold()
             );
             true
+        } else if fix_mode {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let _ = self.install(&exe_path.to_string_lossy());
+            }
+            println!(
+                "   {:<15} {}",
+                "Config:".bright_black(),
+                "[FIXED] registered".green().bold()
+            );
+            true
         } else {
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
                 "not configured".bright_black()
+            );
+            warnings.push(
+                "Copilot CLI MCP server not configured. Run `omni init --copilot`.".to_string(),
             );
             false
         }

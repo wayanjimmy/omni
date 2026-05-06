@@ -6,6 +6,14 @@ use std::path::PathBuf;
 
 pub struct OpenCodeIntegration;
 
+impl OpenCodeIntegration {
+    fn config_path() -> PathBuf {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".config/opencode/opencode.json")
+    }
+}
+
 impl AgentIntegration for OpenCodeIntegration {
     fn id(&self) -> &'static str {
         "opencode"
@@ -16,16 +24,16 @@ impl AgentIntegration for OpenCodeIntegration {
     }
 
     fn install(&self, exe_path: &str) -> anyhow::Result<()> {
-        let opencode_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config/opencode");
-        let config_path = opencode_dir.join("opencode.json");
+        let config_path = Self::config_path();
+
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         let mut val = if config_path.exists() {
             let content = fs::read_to_string(&config_path)?;
             serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
         } else {
-            fs::create_dir_all(&opencode_dir)?;
             json!({})
         };
 
@@ -35,8 +43,12 @@ impl AgentIntegration for OpenCodeIntegration {
                 servers_obj.insert(
                     "omni".to_string(),
                     json!({
+                        "type": "stdio",
                         "command": exe_path,
-                        "args": ["--mcp"]
+                        "args": ["--mcp"],
+                        "env": {
+                            "OMNI_AGENT_ID": "opencode"
+                        }
                     }),
                 );
             }
@@ -51,9 +63,7 @@ impl AgentIntegration for OpenCodeIntegration {
     }
 
     fn uninstall(&self) -> anyhow::Result<()> {
-        let config_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config/opencode/opencode.json");
+        let config_path = Self::config_path();
 
         if !config_path.exists() {
             return Ok(());
@@ -78,14 +88,12 @@ impl AgentIntegration for OpenCodeIntegration {
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
-        let opencode_config = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config/opencode/opencode.json");
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
+        let config_path = Self::config_path();
 
         println!("\n  {}", "OpenCode:".cyan());
-        if opencode_config.exists()
-            && fs::read_to_string(&opencode_config)
+        if config_path.exists()
+            && fs::read_to_string(&config_path)
                 .unwrap_or_default()
                 .contains("omni")
         {
@@ -96,11 +104,24 @@ impl AgentIntegration for OpenCodeIntegration {
                 "[OK]".green().bold()
             );
             true
+        } else if fix_mode {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let _ = self.install(&exe_path.to_string_lossy());
+            }
+            println!(
+                "   {:<15} {}",
+                "Config:".bright_black(),
+                "[FIXED] registered".green().bold()
+            );
+            true
         } else {
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
                 "not configured".bright_black()
+            );
+            warnings.push(
+                "OpenCode MCP server not configured. Run `omni init --opencode`.".to_string(),
             );
             false
         }

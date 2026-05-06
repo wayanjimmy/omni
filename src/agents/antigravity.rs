@@ -7,9 +7,6 @@ use std::path::PathBuf;
 pub struct AntigravityIntegration;
 
 impl AntigravityIntegration {
-    /// Returns the path to the Antigravity MCP config file.
-    /// macOS/Linux: ~/.gemini/antigravity/mcp_config.json
-    /// Windows:     %USERPROFILE%\.gemini\antigravity\mcp_config.json
     fn config_path() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -21,14 +18,12 @@ impl AgentIntegration for AntigravityIntegration {
     fn id(&self) -> &'static str {
         "antigravity"
     }
-
     fn name(&self) -> &'static str {
         "Antigravity IDE"
     }
 
     fn install(&self, exe_path: &str) -> anyhow::Result<()> {
         let config_path = Self::config_path();
-
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -41,17 +36,13 @@ impl AgentIntegration for AntigravityIntegration {
         };
 
         if let Some(obj) = val.as_object_mut() {
-            let mcp_servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
-            if let Some(servers) = mcp_servers.as_object_mut() {
+            let mcp = obj.entry("mcpServers").or_insert_with(|| json!({}));
+            if let Some(servers) = mcp.as_object_mut() {
                 servers.insert(
                     "omni".to_string(),
                     json!({
-                        "type": "stdio",
-                        "command": exe_path,
-                        "args": ["--mcp"],
-                        "env": {
-                            "OMNI_AGENT_ID": "antigravity"
-                        }
+                        "type": "stdio", "command": exe_path, "args": ["--mcp"],
+                        "env": { "OMNI_AGENT_ID": "antigravity" }
                     }),
                 );
             }
@@ -67,11 +58,9 @@ impl AgentIntegration for AntigravityIntegration {
 
     fn uninstall(&self) -> anyhow::Result<()> {
         let config_path = Self::config_path();
-
         if !config_path.exists() {
             return Ok(());
         }
-
         let content = fs::read_to_string(&config_path)?;
         let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) else {
             return Ok(());
@@ -91,10 +80,10 @@ impl AgentIntegration for AntigravityIntegration {
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
         let config_path = Self::config_path();
-
         println!("\n  {}", "Antigravity IDE:".cyan());
+
         if config_path.exists()
             && fs::read_to_string(&config_path)
                 .unwrap_or_default()
@@ -107,12 +96,24 @@ impl AgentIntegration for AntigravityIntegration {
                 "[OK]".green().bold()
             );
             true
+        } else if fix_mode {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let _ = self.install(&exe_path.to_string_lossy());
+            }
+            println!(
+                "   {:<15} {}",
+                "Config:".bright_black(),
+                "[FIXED] registered".green().bold()
+            );
+            true
         } else {
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
                 "not configured".bright_black()
             );
+            warnings
+                .push("Antigravity MCP not configured. Run `omni init --antigravity`.".to_string());
             false
         }
     }

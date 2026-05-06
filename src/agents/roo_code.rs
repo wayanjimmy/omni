@@ -10,14 +10,12 @@ impl AgentIntegration for RooCodeIntegration {
     fn id(&self) -> &'static str {
         "roo-code"
     }
-
     fn name(&self) -> &'static str {
         "Roo Code"
     }
 
     fn install(&self, exe_path: &str) -> anyhow::Result<()> {
         let settings_path = get_roo_path();
-
         if let Some(parent) = settings_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -30,17 +28,13 @@ impl AgentIntegration for RooCodeIntegration {
         };
 
         if let Some(obj) = val.as_object_mut() {
-            let mcp_servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
-            if let Some(servers) = mcp_servers.as_object_mut() {
+            let mcp = obj.entry("mcpServers").or_insert_with(|| json!({}));
+            if let Some(servers) = mcp.as_object_mut() {
                 servers.insert(
                     "omni".to_string(),
                     json!({
-                        "command": exe_path,
-                        "args": ["--mcp"],
-                        "disabled": false,
-                        "env": {
-                            "OMNI_AGENT_ID": "roo_code"
-                        }
+                        "type": "stdio", "command": exe_path, "args": ["--mcp"],
+                        "disabled": false, "env": { "OMNI_AGENT_ID": "roo_code" }
                     }),
                 );
             }
@@ -56,11 +50,9 @@ impl AgentIntegration for RooCodeIntegration {
 
     fn uninstall(&self) -> anyhow::Result<()> {
         let settings_path = get_roo_path();
-
         if !settings_path.exists() {
             return Ok(());
         }
-
         let content = fs::read_to_string(&settings_path)?;
         let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) else {
             return Ok(());
@@ -80,10 +72,10 @@ impl AgentIntegration for RooCodeIntegration {
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
         let settings_path = get_roo_path();
-
         println!("\n  {}", "Roo Code:".cyan());
+
         if settings_path.exists()
             && fs::read_to_string(&settings_path)
                 .unwrap_or_default()
@@ -96,12 +88,23 @@ impl AgentIntegration for RooCodeIntegration {
                 "[OK]".green().bold()
             );
             true
+        } else if fix_mode {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let _ = self.install(&exe_path.to_string_lossy());
+            }
+            println!(
+                "   {:<15} {}",
+                "Config:".bright_black(),
+                "[FIXED] registered".green().bold()
+            );
+            true
         } else {
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
                 "not configured".bright_black()
             );
+            warnings.push("Roo Code MCP not configured. Run `omni init --roo-code`.".to_string());
             false
         }
     }

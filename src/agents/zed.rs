@@ -6,6 +6,14 @@ use std::path::PathBuf;
 
 pub struct ZedIntegration;
 
+impl ZedIntegration {
+    fn config_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("zed/settings.json")
+    }
+}
+
 impl AgentIntegration for ZedIntegration {
     fn id(&self) -> &'static str {
         "zed"
@@ -16,9 +24,7 @@ impl AgentIntegration for ZedIntegration {
     }
 
     fn install(&self, exe_path: &str) -> anyhow::Result<()> {
-        let settings_path = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("zed/settings.json");
+        let settings_path = Self::config_path();
 
         if let Some(parent) = settings_path.parent() {
             fs::create_dir_all(parent)?;
@@ -37,6 +43,7 @@ impl AgentIntegration for ZedIntegration {
                 servers.insert(
                     "omni".to_string(),
                     json!({
+                        "type": "stdio",
                         "command": exe_path,
                         "args": ["--mcp"],
                         "env": {
@@ -56,9 +63,7 @@ impl AgentIntegration for ZedIntegration {
     }
 
     fn uninstall(&self) -> anyhow::Result<()> {
-        let settings_path = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("zed/settings.json");
+        let settings_path = Self::config_path();
 
         if !settings_path.exists() {
             return Ok(());
@@ -85,10 +90,8 @@ impl AgentIntegration for ZedIntegration {
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
-        let settings_path = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("zed/settings.json");
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
+        let settings_path = Self::config_path();
 
         println!("\n  {}", "Zed Editor:".cyan());
         if settings_path.exists()
@@ -103,12 +106,23 @@ impl AgentIntegration for ZedIntegration {
                 "[OK]".green().bold()
             );
             true
+        } else if fix_mode {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let _ = self.install(&exe_path.to_string_lossy());
+            }
+            println!(
+                "   {:<15} {}",
+                "Config:".bright_black(),
+                "[FIXED] registered".green().bold()
+            );
+            true
         } else {
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
                 "not configured".bright_black()
             );
+            warnings.push("Zed MCP server not configured. Run `omni init --zed`.".to_string());
             false
         }
     }

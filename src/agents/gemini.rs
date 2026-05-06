@@ -1,6 +1,6 @@
 use crate::agents::AgentIntegration;
 use colored::*;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
 
@@ -16,13 +16,13 @@ impl AgentIntegration for GeminiIntegration {
     }
 
     fn install(&self, exe_path: &str) -> anyhow::Result<()> {
-        let settings_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".gemini/settings.json");
+        let settings_path = get_settings_path();
 
         if let Some(parent) = settings_path.parent() {
             fs::create_dir_all(parent)?;
         }
+
+        let _ = backup_settings(&settings_path);
 
         let mut val = if settings_path.exists() {
             let content = fs::read_to_string(&settings_path)?;
@@ -31,12 +31,14 @@ impl AgentIntegration for GeminiIntegration {
             json!({})
         };
 
+        // Install MCP server
         if let Some(obj) = val.as_object_mut() {
             let mcp_servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
             if let Some(servers) = mcp_servers.as_object_mut() {
                 servers.insert(
                     "omni".to_string(),
                     json!({
+                        "type": "stdio",
                         "command": exe_path,
                         "args": ["--mcp"],
                         "trust": true,
@@ -48,67 +50,326 @@ impl AgentIntegration for GeminiIntegration {
             }
         }
 
+        // Install hooks
+        install_omni_hooks(&mut val, exe_path);
+
         fs::write(&settings_path, serde_json::to_string_pretty(&val)?)?;
         println!(
-            "  {} Configured MCP Server in ~/.gemini/settings.json",
-            "✓".green()
+            "  {} Configured {} + {} in ~/.gemini/settings.json",
+            "✓".green(),
+            "MCP Server".bold(),
+            "Hooks".bold()
         );
         Ok(())
     }
 
     fn uninstall(&self) -> anyhow::Result<()> {
-        let settings_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".gemini/settings.json");
+        let settings_path = get_settings_path();
 
         if !settings_path.exists() {
             return Ok(());
         }
 
         let content = fs::read_to_string(&settings_path)?;
-        let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&content) else {
+        let Ok(mut val) = serde_json::from_str::<Value>(&content) else {
             return Ok(());
         };
 
-        if let Some(obj) = val.as_object_mut()
-            && let Some(servers) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut())
-        {
-            servers.remove("omni");
+        if let Some(obj) = val.as_object_mut() {
+            // Remove MCP server
+            if let Some(servers) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+                servers.remove("omni");
+            }
         }
+
+        // Remove hooks
+        remove_omni_hooks(&mut val);
 
         fs::write(&settings_path, serde_json::to_string_pretty(&val)?)?;
         println!(
-            "  {} Removed MCP Server from ~/.gemini/settings.json",
+            "  {} Removed MCP Server + Hooks from ~/.gemini/settings.json",
             "✓".yellow()
         );
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
-        let settings_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".gemini/settings.json");
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
+        let settings_path = get_settings_path();
+        let mut all_ok = true;
 
         println!("\n  {}", "Gemini CLI:".cyan());
-        if settings_path.exists()
-            && fs::read_to_string(&settings_path)
-                .unwrap_or_default()
-                .contains("\"omni\"")
-        {
-            println!(
-                "   {:<15} {} {}",
-                "Config:".bright_black(),
-                "~/.gemini/settings.json".bright_black(),
-                "[OK]".green().bold()
-            );
-            true
-        } else {
+
+        if !settings_path.exists() {
+            if fix_mode {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    let _ = self.install(&exe_path.to_string_lossy());
+                }
+                println!(
+                    "   {:<15} {}",
+                    "Config:".bright_black(),
+                    "[FIXED] installed".green().bold()
+                );
+                return true;
+            }
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
-                "not configured".bright_black()
+                "[ERROR] settings.json missing".red()
             );
-            false
+            warnings
+                .push("Gemini CLI settings not found. Have you installed Gemini CLI?".to_string());
+            return false;
         }
+
+        let content = fs::read_to_string(&settings_path).unwrap_or_default();
+
+        // Check MCP
+        if content.contains("\"omni\"") {
+            println!(
+                "   {:<15} {} {}",
+                "MCP Server:".bright_black(),
+                "~/.gemini/settings.json".bright_black(),
+                "[OK]".green().bold()
+            );
+        } else {
+            all_ok = false;
+            if fix_mode {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    let _ = self.install(&exe_path.to_string_lossy());
+                }
+                println!(
+                    "   {:<15} {}",
+                    "MCP Server:".bright_black(),
+                    "[FIXED] registered".green().bold()
+                );
+            } else {
+                println!(
+                    "   {:<15} {}",
+                    "MCP Server:".bright_black(),
+                    "[WARNING] not configured".yellow().bold()
+                );
+                warnings.push(
+                    "Gemini CLI MCP server not configured. Run `omni init --gemini`.".to_string(),
+                );
+            }
+        }
+
+        // Check hooks
+        let has_before = content.contains("BeforeTool");
+        let has_after = content.contains("AfterTool");
+
+        if has_before && has_after {
+            let fmt_hook = |name: &str, tag: &str| {
+                if content.contains(tag) {
+                    println!(
+                        "   {:<15} {}",
+                        name.bright_black(),
+                        "[OK] installed".green()
+                    );
+                }
+            };
+            fmt_hook("BeforeTool", "BeforeTool");
+            fmt_hook("AfterTool", "AfterTool");
+        } else {
+            all_ok = false;
+            if fix_mode {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    let _ = self.install(&exe_path.to_string_lossy());
+                }
+                println!(
+                    "   {:<15} {}",
+                    "Hooks:".bright_black(),
+                    "[FIXED] missing hooks installed".green().bold()
+                );
+            } else {
+                println!(
+                    "   {:<15} {}",
+                    "Hooks:".bright_black(),
+                    "[WARNING] hooks not configured".yellow().bold()
+                );
+                warnings
+                    .push("Gemini CLI hooks not configured. Run `omni init --gemini`.".to_string());
+            }
+        }
+
+        all_ok
+    }
+}
+
+fn get_settings_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".gemini/settings.json")
+}
+
+fn backup_settings(path: &PathBuf) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let backup_path = path.with_extension("json.bak");
+    fs::copy(path, backup_path)?;
+    Ok(())
+}
+
+pub fn install_omni_hooks(val: &mut Value, exe_path: &str) {
+    let obj = match val.as_object_mut() {
+        Some(o) => o,
+        None => {
+            *val = json!({});
+            val.as_object_mut().unwrap()
+        }
+    };
+
+    let hooks = obj
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .unwrap();
+
+    if exe_path.is_empty() {
+        return;
+    }
+
+    let ensure_hook = |arr_val: &mut serde_json::Value, matcher: &str, hook_cmd: &str| {
+        let arr = arr_val.as_array_mut().unwrap();
+        for v in arr.iter() {
+            if let Some(inner) = v.get("hooks").and_then(|h| h.as_array()) {
+                for h in inner {
+                    if h.get("command").and_then(|c| c.as_str()) == Some(hook_cmd) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        arr.push(json!({
+            "matcher": matcher,
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_cmd
+                }
+            ]
+        }));
+    };
+
+    let pre_cmd = format!("{} --pre-hook", exe_path);
+    let post_cmd = format!("{} --post-hook", exe_path);
+
+    // Gemini CLI uses BeforeTool / AfterTool (analogous to Claude's PreToolUse / PostToolUse)
+    ensure_hook(
+        hooks.entry("BeforeTool").or_insert_with(|| json!([])),
+        "Bash",
+        &pre_cmd,
+    );
+    ensure_hook(
+        hooks.entry("AfterTool").or_insert_with(|| json!([])),
+        "Bash",
+        &post_cmd,
+    );
+}
+
+pub fn remove_omni_hooks(val: &mut Value) {
+    if let Some(obj) = val.as_object_mut()
+        && let Some(hooks) = obj.get_mut("hooks").and_then(|h| h.as_object_mut())
+    {
+        for (_key, arr_val) in hooks.iter_mut() {
+            if let Some(arr) = arr_val.as_array_mut() {
+                arr.retain(|v| {
+                    if let Some(inner) = v.get("hooks").and_then(|h| h.as_array()) {
+                        !inner.iter().any(|h| {
+                            h.get("command").and_then(|c| c.as_str()).is_some_and(|c| {
+                                c.contains("omni")
+                                    && (c.contains("--hook")
+                                        || c.contains("--post-hook")
+                                        || c.contains("--pre-hook"))
+                            })
+                        })
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_install_hooks_creates_valid_structure() {
+        let mut val = json!({});
+        install_omni_hooks(&mut val, "/usr/bin/omni");
+
+        let hooks = val.get("hooks").unwrap().as_object().unwrap();
+        assert!(hooks.contains_key("BeforeTool"));
+        assert!(hooks.contains_key("AfterTool"));
+    }
+
+    #[test]
+    fn test_install_hooks_idempotent() {
+        let mut val = json!({});
+        install_omni_hooks(&mut val, "/usr/bin/omni");
+
+        let count = |v: &Value, key: &str| -> usize {
+            v.get("hooks")
+                .unwrap()
+                .get(key)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len()
+        };
+
+        assert_eq!(count(&val, "BeforeTool"), 1);
+        assert_eq!(count(&val, "AfterTool"), 1);
+
+        install_omni_hooks(&mut val, "/usr/bin/omni");
+        assert_eq!(count(&val, "BeforeTool"), 1, "Should be idempotent");
+        assert_eq!(count(&val, "AfterTool"), 1, "Should be idempotent");
+    }
+
+    #[test]
+    fn test_remove_hooks_cleans_omni_entries() {
+        let mut val = json!({});
+        install_omni_hooks(&mut val, "/usr/bin/omni");
+
+        assert!(
+            !val.get("hooks")
+                .unwrap()
+                .get("BeforeTool")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        remove_omni_hooks(&mut val);
+
+        let arr = val
+            .get("hooks")
+            .unwrap()
+            .get("BeforeTool")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(arr.len(), 0, "Should be empty after remove");
+    }
+
+    #[test]
+    fn test_empty_exe_path_skips_hooks() {
+        let mut val = json!({});
+        install_omni_hooks(&mut val, "");
+
+        // hooks key exists but no entries inside
+        let hooks = val.get("hooks").unwrap().as_object().unwrap();
+        assert!(
+            hooks.is_empty()
+                || hooks
+                    .values()
+                    .all(|v| v.as_array().is_none_or(|a| a.is_empty()))
+        );
     }
 }

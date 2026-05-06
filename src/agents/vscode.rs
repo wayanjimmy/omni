@@ -45,6 +45,7 @@ impl AgentIntegration for VscodeIntegration {
                 servers_obj.insert(
                     "omni".to_string(),
                     json!({
+                        "type": "stdio",
                         "command": exe_path,
                         "args": ["--mcp"],
                         "env": {
@@ -89,7 +90,7 @@ impl AgentIntegration for VscodeIntegration {
         Ok(())
     }
 
-    fn doctor_check(&self, _fix_mode: bool, _warnings: &mut Vec<String>) -> bool {
+    fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
         let config_path = Self::config_path();
 
         println!("\n  {}", "VS Code:".cyan());
@@ -105,12 +106,24 @@ impl AgentIntegration for VscodeIntegration {
                 "[OK]".green().bold()
             );
             true
+        } else if fix_mode {
+            if let Ok(exe_path) = std::env::current_exe() {
+                let _ = self.install(&exe_path.to_string_lossy());
+            }
+            println!(
+                "   {:<15} {}",
+                "Config:".bright_black(),
+                "[FIXED] registered".green().bold()
+            );
+            true
         } else {
             println!(
                 "   {:<15} {}",
                 "Config:".bright_black(),
                 "not configured".bright_black()
             );
+            warnings
+                .push("VS Code MCP server not configured. Run `omni init --vscode`.".to_string());
             false
         }
     }

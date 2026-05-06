@@ -432,7 +432,10 @@ pub fn install_mcp_server(exe_path: &str) -> anyhow::Result<()> {
         json!({
             "type": "stdio",
             "command": exe_path,
-            "args": ["--mcp"]
+            "args": ["--mcp"],
+            "env": {
+                "OMNI_AGENT_ID": "claude_code"
+            },
         }),
     );
 
@@ -446,7 +449,10 @@ pub fn install_mcp_server(exe_path: &str) -> anyhow::Result<()> {
                     json!({
                         "type": "stdio",
                         "command": exe_path,
-                        "args": ["--mcp"]
+                        "args": ["--mcp"],
+                        "env": {
+                            "OMNI_AGENT_ID": "claude_code"
+                        },
                     }),
                 );
             }
@@ -468,7 +474,10 @@ pub fn install_mcp_server(exe_path: &str) -> anyhow::Result<()> {
                 json!({
                     "type": "stdio",
                     "command": exe_path,
-                    "args": ["--mcp"]
+                    "args": ["--mcp"],
+                    "env": {
+                        "OMNI_AGENT_ID": "claude_code"
+                    },
                 }),
             );
         }
