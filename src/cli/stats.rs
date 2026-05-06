@@ -124,7 +124,7 @@ fn shorten_command(cmd: &str, max_len: usize) -> String {
 
 fn agent_display_name(agent_id: &str) -> &str {
     match agent_id {
-        "claude_code" | "claude" => "Claude Code",
+        "claude_code" | "claude" | "unknown" | "terminal" => "Claude Code",
         "cursor" => "Cursor AI",
         "zed" => "Zed Editor",
         "cline" => "Cline",
@@ -539,7 +539,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
                 .get(&display_name)
                 .and_then(|agents| agents.iter().max_by_key(|(_, calls)| *calls))
                 .map(|(agent_id, _)| agent_display_name(agent_id))
-                .unwrap_or("unknown");
+                .unwrap_or("Claude Code");
 
             println!(
                 "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {}{}",
