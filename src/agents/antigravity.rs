@@ -46,6 +46,7 @@ impl AgentIntegration for AntigravityIntegration {
                 servers.insert(
                     "omni".to_string(),
                     json!({
+                        "type": "stdio",
                         "command": exe_path,
                         "args": ["--mcp"],
                         "env": {
