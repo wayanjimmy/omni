@@ -4,8 +4,9 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(RustEmbed)]
 #[folder = "filters/"]
@@ -621,53 +622,140 @@ pub fn run_inline_tests(filters: &[TomlFilter]) -> TestReport {
     TestReport { passes, failures }
 }
 
-static ALL_FILTERS_CACHE: OnceLock<Vec<TomlFilter>> = OnceLock::new();
+#[derive(Clone)]
+struct FiltersCache {
+    fingerprint: u64,
+    filters: Vec<TomlFilter>,
+}
 
-pub fn load_all_filters() -> &'static [TomlFilter] {
-    ALL_FILTERS_CACHE.get_or_init(|| {
-        let mut all = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+static ALL_FILTERS_CACHE: OnceLock<Mutex<FiltersCache>> = OnceLock::new();
 
-        // 1. .omni/filters/*.toml (project-local, if trusted)
-        if let Ok(cwd) = std::env::current_dir() {
-            let local_filters_dir = cwd.join(".omni").join("filters");
-            if local_filters_dir.exists() {
-                let config_path = cwd.join("omni_config.json");
-                if crate::guard::trust::is_trusted(&config_path) {
-                    let report = load_from_dir(&local_filters_dir);
-                    for f in report.filters {
-                        if !seen.contains(&f.name) {
-                            seen.insert(f.name.clone());
-                            all.push(f);
-                        }
+pub fn load_all_filters() -> Vec<TomlFilter> {
+    let cache = ALL_FILTERS_CACHE.get_or_init(|| {
+        Mutex::new(FiltersCache {
+            fingerprint: 0,
+            filters: Vec::new(),
+        })
+    });
+
+    let fingerprint = compute_filters_fingerprint();
+    let mut guard = cache.lock().unwrap();
+
+    if guard.fingerprint == fingerprint && !guard.filters.is_empty() {
+        return guard.filters.clone();
+    }
+
+    let filters = load_all_filters_uncached();
+    guard.fingerprint = fingerprint;
+    guard.filters = filters.clone();
+    filters
+}
+
+fn load_all_filters_uncached() -> Vec<TomlFilter> {
+    let mut all = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // 1. .omni/filters/*.toml (project-local, if trusted)
+    if let Ok(cwd) = std::env::current_dir() {
+        let local_filters_dir = cwd.join(".omni").join("filters");
+        if local_filters_dir.exists() {
+            let config_path = cwd.join("omni_config.json");
+            if crate::guard::trust::is_trusted(&config_path) {
+                let report = load_from_dir(&local_filters_dir);
+                for f in report.filters {
+                    if !seen.contains(&f.name) {
+                        seen.insert(f.name.clone());
+                        all.push(f);
                     }
                 }
             }
         }
+    }
 
-        // 2. ~/.omni/filters/*.toml (user-global)
-        let user_dir = dirs::home_dir().map(|h| h.join(".omni").join("filters"));
-        if let Some(dir) = user_dir {
-            let report = load_from_dir(&dir);
-            for f in report.filters {
-                if !seen.contains(&f.name) {
-                    seen.insert(f.name.clone());
-                    all.push(f);
-                }
-            }
-        }
-
-        // 3. Built-in filters (embedded)
-        let report = load_embedded_filters();
+    // 2. ~/.omni/filters/*.toml (user-global)
+    let user_dir = dirs::home_dir().map(|h| h.join(".omni").join("filters"));
+    if let Some(dir) = user_dir {
+        let report = load_from_dir(&dir);
         for f in report.filters {
             if !seen.contains(&f.name) {
                 seen.insert(f.name.clone());
                 all.push(f);
             }
         }
+    }
 
-        all
-    })
+    // 3. Built-in filters (embedded)
+    let report = load_embedded_filters();
+    for f in report.filters {
+        if !seen.contains(&f.name) {
+            seen.insert(f.name.clone());
+            all.push(f);
+        }
+    }
+
+    all
+}
+
+fn compute_filters_fingerprint() -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    // 1) project-local (include trust decision + config mtime)
+    if let Ok(cwd) = std::env::current_dir() {
+        let config_path = cwd.join("omni_config.json");
+        let is_trusted = crate::guard::trust::is_trusted(&config_path);
+        is_trusted.hash(&mut hasher);
+        hash_path_metadata(&config_path, &mut hasher);
+
+        let local_filters_dir = cwd.join(".omni").join("filters");
+        hash_dir_toml_entries(&local_filters_dir, &mut hasher);
+    }
+
+    // 2) user-global
+    if let Some(dir) = dirs::home_dir().map(|h| h.join(".omni").join("filters")) {
+        hash_dir_toml_entries(&dir, &mut hasher);
+    }
+
+    hasher.finish()
+}
+
+fn hash_dir_toml_entries(dir: &Path, hasher: &mut impl Hasher) {
+    if !dir.exists() || !dir.is_dir() {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+
+    let mut paths: Vec<_> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "toml"))
+        .collect();
+    paths.sort();
+
+    for p in paths {
+        hash_path_metadata(&p, hasher);
+    }
+}
+
+fn hash_path_metadata(path: &Path, hasher: &mut impl Hasher) {
+    path.to_string_lossy().hash(hasher);
+
+    let Ok(meta) = fs::metadata(path) else {
+        0u64.hash(hasher);
+        return;
+    };
+
+    meta.len().hash(hasher);
+    if let Ok(modified) = meta.modified()
+        && let Ok(duration) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH)
+    {
+        duration.as_secs().hash(hasher);
+        duration.subsec_nanos().hash(hasher);
+    } else {
+        0u64.hash(hasher);
+    }
 }
 
 pub fn get_filters_by_source() -> (LoadReport, LoadReport, LoadReport) {
@@ -701,7 +789,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_load_from_file_berhasil_for_valid_toml() {
+    fn test_load_from_file_succeeds_for_valid_toml() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
@@ -719,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_file_skip_filter_yang_invalid_warning_no_crash() {
+    fn test_load_from_file_skips_invalid_filters_without_crashing() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
@@ -758,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tomlfilter_apply_pipeline_stages_dalam_urutan() {
+    fn test_tomlfilter_applies_pipeline_stages_in_order() {
         let filter = TomlFilter {
             name: "sc".to_string(),
             description: None,
@@ -778,7 +866,7 @@ mod tests {
     }
 
     #[test]
-    fn test_match_output_short_circuit_sebelum_line_filter() {
+    fn test_match_output_short_circuits_before_line_filtering() {
         let filter = TomlFilter {
             name: "sc".to_string(),
             description: None,
@@ -801,7 +889,7 @@ mod tests {
     }
 
     #[test]
-    fn test_run_inline_tests_pass_for_semua_built_in_filters() {
+    fn test_run_inline_tests_succeeds_for_all_built_in_filters() {
         let dir = tempdir().unwrap();
         let filters_dir = dir.path().join("filters");
         fs::create_dir(&filters_dir).unwrap();
@@ -837,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn test_project_filters_not_dimuat_jika_not_trusted() {
+    fn test_project_filters_are_not_loaded_when_untrusted() {
         // Mocking an untrusted `.omni/filters` configuration.
         // Because trust evaluates `is_trusted` false by default locally for unknown bounfores.
         // The project local load won't pick up mock files if `omni_config.json` doesn't exist/trust.

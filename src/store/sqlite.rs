@@ -247,7 +247,7 @@ impl Store {
                 rewind_hash  TEXT DEFAULT '',
                 command      TEXT DEFAULT '',
                 project_path TEXT DEFAULT '',
-                agent_id     TEXT DEFAULT 'claude_code'
+                agent_id     TEXT DEFAULT 'unknown'
             );
             CREATE INDEX IF NOT EXISTS idx_dist_ts ON distillations(ts);
             CREATE INDEX IF NOT EXISTS idx_dist_session ON distillations(session_id);
@@ -384,11 +384,11 @@ impl Store {
                     rewind_hash  TEXT DEFAULT '',
                     command      TEXT DEFAULT '',
                     project_path TEXT DEFAULT '',
-                    agent_id     TEXT DEFAULT 'claude_code'
+                    agent_id     TEXT DEFAULT 'unknown'
                 );
                 INSERT INTO distillations 
                 (id, session_id, ts, filter_name, input_bytes, output_bytes, route, score, context_score, latency_ms, rewind_hash, command, project_path, agent_id)
-                SELECT id, session_id, ts, filter_name, input_bytes, output_bytes, route, score, context_score, latency_ms, rewind_hash, command, '', 'claude_code' 
+                SELECT id, session_id, ts, filter_name, input_bytes, output_bytes, route, score, context_score, latency_ms, rewind_hash, command, '', 'unknown' 
                 FROM distillations_old;
                 DROP TABLE distillations_old;
                 CREATE INDEX idx_dist_ts ON distillations(ts);
@@ -412,7 +412,7 @@ impl Store {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE distillations ADD COLUMN agent_id TEXT DEFAULT 'claude_code'",
+            "ALTER TABLE distillations ADD COLUMN agent_id TEXT DEFAULT 'unknown'",
             [],
         );
 
@@ -567,10 +567,15 @@ impl Store {
         let hash_result = hasher.finalize();
         let full_hash = hex::encode(hash_result);
         let short_hash = full_hash[..16].to_string();
+        let ts_ns = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let rewind_key = format!("{}_{}", ts_ns, short_hash);
 
         let conn = match self.conn.lock() {
             Ok(c) => c,
-            Err(_) => return short_hash,
+            Err(_) => return rewind_key,
         };
 
         let ts = chrono::Utc::now().timestamp();
@@ -579,10 +584,10 @@ impl Store {
         let _ = conn.execute(
             "INSERT OR IGNORE INTO rewind_store (hash, content, ts, original_len, retrieved)
              VALUES (?1, ?2, ?3, ?4, 0)",
-            params![short_hash, content, ts, original_len],
+            params![rewind_key, content, ts, original_len],
         );
 
-        short_hash
+        rewind_key
     }
 
     pub fn retrieve_rewind(&self, hash: &str) -> Option<String> {
@@ -791,7 +796,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT
-                COALESCE(agent_id, 'claude_code') as agent,
+                COALESCE(agent_id, 'unknown') as agent,
                 COUNT(*) as calls,
                 COALESCE(SUM(input_bytes), 0) as total_input,
                 COALESCE(SUM(output_bytes), 0) as total_output
@@ -827,7 +832,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT
                 command,
-                COALESCE(agent_id, 'claude_code') as agent,
+                COALESCE(agent_id, 'unknown') as agent,
                 COUNT(*) as calls,
                 COALESCE(SUM(input_bytes), 0) as total_input,
                 COALESCE(SUM(output_bytes), 0) as total_output
@@ -1243,7 +1248,7 @@ mod tests {
     }
 
     #[test]
-    fn test_open_creates_database_and_schema() {
+    fn open_creates_database_and_schema() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("omni.db");
 
@@ -1268,7 +1273,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_distillation_fire_and_forget_not_panic() {
+    fn record_distillation_does_not_panic() {
         let (store, _dir) = get_temp_store();
         let res = DistillResult {
             output: "hello".to_string(),
@@ -1289,12 +1294,12 @@ mod tests {
     }
 
     #[test]
-    fn test_store_rewind_and_retrieve_rewind_roundtrip() {
+    fn rewinds_and_retrieves_content() {
         let (store, _dir) = get_temp_store();
         let content = "this is some compressed content";
         let hash = store.store_rewind(content);
 
-        assert_eq!(hash.len(), 16);
+        assert!(hash.contains('_'));
 
         let retrieved = store.retrieve_rewind(&hash);
         assert_eq!(retrieved, Some(content.to_string()));
@@ -1312,17 +1317,19 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_rewind_hash_not_error() {
+    fn duplicate_rewind_hashes_are_unique() {
         let (store, _dir) = get_temp_store();
         let content = "duplicate me";
         let hash1 = store.store_rewind(content);
         let hash2 = store.store_rewind(content); // duplicate
 
-        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash2);
+        assert_eq!(store.retrieve_rewind(&hash1), Some(content.to_string()));
+        assert_eq!(store.retrieve_rewind(&hash2), Some(content.to_string()));
     }
 
     #[test]
-    fn test_index_event_and_search_session_events_fts5() {
+    fn indexes_and_searches_session_events() {
         let (store, _dir) = get_temp_store();
         store.index_event("sess_1", "command", "git status is running fast");
         store.index_event("sess_1", "command", "npm install");
@@ -1334,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fts5_porter_stemming_running_matches_run() {
+    fn fts5_stems_search_terms() {
         let (store, _dir) = get_temp_store();
         store.index_event("sess_2", "log", "The server is running now");
 
@@ -1345,7 +1352,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_old_menghapus_entries_lama() {
+    fn cleanup_removes_stale_entries() {
         let (store, _dir) = get_temp_store();
         let old_ts = chrono::Utc::now().timestamp() - (5 * 86400); // 5 days ago
 

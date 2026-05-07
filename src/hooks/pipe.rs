@@ -5,6 +5,12 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// Guardrail: only emit distilled output if it's at least this much smaller than input
+const MIN_REDUCTION_PCT: usize = 95; // e.g., if output is 96% of input, just return original input
+
+/// Maximum output size before truncation to prevent overwhelming context windows
+pub const MAX_OUTPUT_BYTES: usize = 50_000;
+
 use crate::pipeline::{Route, SessionState, collapse, scorer, toml_filter};
 use crate::store::sqlite::Store;
 use crate::store::transcript::{Transcript, TranscriptEntry};
@@ -38,8 +44,9 @@ struct PipelineResult {
 
 impl PipelineResult {
     fn best_output(&self) -> &str {
-        if self.output.len() >= self.input_text.len() {
-            &self.input_text // 100% Passthrough fallback maintaining limits correctly
+        let guardrail_len = self.input_text.len() * MIN_REDUCTION_PCT / 100;
+        if self.output.len() >= guardrail_len {
+            &self.input_text // Guardrail: never emit output ~same size as input
         } else {
             &self.output
         }
@@ -60,7 +67,9 @@ pub fn run_inner<R: Read, W: Write, E: Write>(
     } else {
         None
     };
-    let command_to_use = command_name.or(detected_cmd.as_deref());
+    let command_to_use = command_name
+        .or(detected_cmd.as_deref())
+        .map(|c| c.strip_prefix("omni exec ").unwrap_or(c));
 
     let start_time = Instant::now();
 
@@ -71,18 +80,25 @@ pub fn run_inner<R: Read, W: Write, E: Write>(
     };
 
     // Phase 2: Guard
-    if let crate::guard::limits::InputCheck::Empty = crate::guard::limits::check_input(&input_text)
-    {
+    let input_check = crate::guard::limits::check_input(&input_text);
+
+    if let crate::guard::limits::InputCheck::Empty = input_check {
         // Silent passthrough: command produced no output (e.g. failed upstream).
         // Don't error — just exit cleanly so we don't pollute Claude Code's stderr.
         return Ok(());
-    } else if let crate::guard::limits::InputCheck::TooLarge =
-        crate::guard::limits::check_input(&input_text)
-    {
+    } else if matches!(
+        input_check,
+        crate::guard::limits::InputCheck::Warn | crate::guard::limits::InputCheck::TooLarge
+    ) {
         writeln!(
             error,
-            "[omni: Warning] Input size exceeds 1MB, processing may take longer..."
+            "[omni: Warning] Large input detected; processing may take longer..."
         )?;
+    }
+
+    if crate::guard::env::is_passthrough() {
+        output.write_all(input_text.as_bytes())?;
+        return Ok(());
     }
 
     // Phase 3: Transcript Begin
@@ -90,27 +106,20 @@ pub fn run_inner<R: Read, W: Write, E: Write>(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let command_stripped = command_to_use.map(|c| {
-        if let Some(stripped) = c.strip_prefix("omni exec ") {
-            stripped
-        } else {
-            c
-        }
-    });
-    transcript_begin(&session, &input_text, command_stripped, &mut error);
+    transcript_begin(&session, &input_text, command_to_use, &mut error);
 
     // Phase 4: Distill
     let result = distill(
         input_text,
         &session,
-        command_stripped,
+        command_to_use,
         start_time,
         store.as_deref(),
         project_path,
     );
 
     // Phase 5: Persist
-    persist(&result, &store, &session, command_stripped, &mut error);
+    persist(&result, &store, &session, command_to_use, &mut error);
 
     // Phase 6: Output
     emit_output(&result, &mut output, &mut error)?;
@@ -267,23 +276,6 @@ fn distill(
             }
 
             let mut r_hash = None;
-
-            // Determine Route
-            let ratio = 1.0 - (out.len() as f32 / input_text.len().max(1) as f32);
-            let mut route = if r_hash.is_some() {
-                Route::Rewind
-            } else if ratio >= 0.7 {
-                Route::Keep
-            } else if ratio >= 0.3 {
-                Route::Soft
-            } else {
-                Route::Passthrough
-            };
-
-            if route == Route::Soft {
-                out.push_str("\n[Partial signal - omni learn recommended]\n");
-            }
-
             if should_store && let Some(s) = store {
                 let hash = s.store_rewind(&input_text);
                 if std::io::stdout().is_terminal() {
@@ -302,13 +294,27 @@ fn distill(
                     ));
                 }
                 r_hash = Some(hash);
-                route = Route::Rewind; // Override if stored in rewind
+            }
+
+            // Determine Route
+            let ratio = 1.0 - (out.len() as f32 / input_text.len().max(1) as f32);
+            let route = if r_hash.is_some() {
+                Route::Rewind
+            } else if ratio >= 0.7 {
+                Route::Keep
+            } else if ratio >= 0.3 {
+                Route::Soft
+            } else {
+                Route::Passthrough
+            };
+
+            if route == Route::Soft {
+                out.push_str("\n[Partial signal - omni learn recommended]\n");
             }
 
             // Safety truncation
-            const MAX_OUTPUT: usize = 50_000;
-            if out.len() > MAX_OUTPUT {
-                out.truncate(MAX_OUTPUT);
+            if out.len() > MAX_OUTPUT_BYTES {
+                out.truncate(MAX_OUTPUT_BYTES);
                 out.push_str("\n[OMNI: output truncated]\n");
             }
 
@@ -345,7 +351,7 @@ fn persist<E: Write>(
     result: &PipelineResult,
     store_opt: &Option<Arc<Store>>,
     session: &Option<Arc<Mutex<SessionState>>>,
-    command_name: Option<&str>,
+    command_to_use: Option<&str>,
     error: &mut E,
 ) {
     if let Some(s) = store_opt {
@@ -369,13 +375,13 @@ fn persist<E: Write>(
         s.record_distillation(
             &result.session_id,
             &distill_result,
-            command_name.unwrap_or(""),
+            command_to_use.unwrap_or(""),
             &result.project_path,
             &agent_id,
         );
         s.record_trace(
             &result.session_id,
-            command_name.unwrap_or(""),
+            command_to_use.unwrap_or(""),
             &agent_id,
             &result.project_path,
             &result.input_text,
@@ -385,7 +391,7 @@ fn persist<E: Write>(
         if let Some(sess) = session {
             let tracker = crate::session::tracker::SessionTracker::new(sess.clone(), s.clone());
             tracker.track_command(
-                command_name.unwrap_or(""),
+                command_to_use.unwrap_or(""),
                 &result.input_text,
                 &distill_result,
             );
@@ -467,7 +473,7 @@ fn emit_output<W: Write, E: Write>(
             "{} {:.1}% reduction ({} → {}) {}ms",
             "⏺".cyan(),
             reduction,
-            crate::cli::stats::format_bytes(result.input_text.len() as u64).black(),
+            crate::cli::stats::format_bytes(result.input_text.len() as u64).bright_black(),
             crate::cli::stats::format_bytes(result.best_output().len() as u64).green(),
             elapsed.to_string().bright_black()
         );
@@ -605,7 +611,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pipe_mode_distils_git_diff() {
+    fn passes_through_when_reduction_is_too_small() {
+        let input_text = "a".repeat(1000);
+        let output = "b".repeat(960); // 4% reduction only
+        let res = PipelineResult {
+            session_id: "s".to_string(),
+            output,
+            filter_name: "f".to_string(),
+            rewind_hash: None,
+            segments_kept: 0,
+            segments_dropped: 0,
+            input_text: input_text.clone(),
+            start_time: Instant::now(),
+            collapse_savings: None,
+            project_path: ".".to_string(),
+            route: Route::Keep,
+        };
+
+        assert_eq!(res.best_output(), input_text.as_str());
+    }
+
+    #[test]
+    fn distills_git_diff() {
         let input = "diff --git a/foo b/foo\n@@ -1,1 +1,1 @@\n-old\n+new\n";
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -617,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pipe_mode_passthrough_for_short_input() {
+    fn passes_through_short_input() {
         let input = "hello world\nthis is short";
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -629,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pipe_mode_exit_0_selalu_as_ok() {
+    fn exit_0_is_always_treated_as_ok() {
         let binary_input: Vec<u8> = vec![0xFF, 0xFE, 0xFD];
 
         let mut out = Vec::new();

@@ -67,12 +67,26 @@ pub fn is_quiet() -> bool {
     env::vars().any(|(k, _)| k.eq_ignore_ascii_case("OMNI_QUIET"))
 }
 
+/// Returns true if OMNI_PASSTHROUGH is enabled (1/true/yes).
+/// When enabled, OMNI will bypass distillation and emit raw output.
+pub fn is_passthrough() -> bool {
+    env::vars().any(|(k, v)| {
+        if !k.eq_ignore_ascii_case("OMNI_PASSTHROUGH") {
+            return false;
+        }
+        matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_sanitize_env_menghapus_ld_preload() {
+    fn test_sanitize_env_removes_ld_preload() {
         let mock_env = vec![
             ("LD_PRELOAD".to_string(), "bad.so".to_string()),
             ("NORMAL_VAR".to_string(), "123".to_string()),
@@ -83,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_env_menghapus_semua_denylist_entries() {
+    fn test_sanitize_env_removes_all_denylist_entries() {
         let mock_env: Vec<(String, String)> = DENYLIST
             .iter()
             .map(|key| (key.to_string(), "malicious_payload".to_string()))
@@ -97,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_env_mempertahankan_path_and_normal_vars() {
+    fn test_sanitize_env_preserves_path_and_normal_vars() {
         let mock_env = vec![
             ("PATH".to_string(), "/usr/bin:/bin".to_string()),
             ("NORMAL_VAR".to_string(), "123".to_string()),
@@ -111,5 +125,25 @@ mod tests {
 
         assert!(has_path);
         assert!(has_normal);
+    }
+
+    #[test]
+    fn test_is_passthrough_enabled_by_value() {
+        // SAFETY: Test runs single-threaded; no concurrent env access.
+        unsafe {
+            std::env::set_var("OMNI_PASSTHROUGH", "1");
+        }
+        assert!(is_passthrough());
+        unsafe {
+            std::env::set_var("OMNI_PASSTHROUGH", "true");
+        }
+        assert!(is_passthrough());
+        unsafe {
+            std::env::set_var("OMNI_PASSTHROUGH", "0");
+        }
+        assert!(!is_passthrough());
+        unsafe {
+            std::env::remove_var("OMNI_PASSTHROUGH");
+        }
     }
 }

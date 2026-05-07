@@ -3,6 +3,7 @@ pub const WARN_INPUT: usize = 1024 * 1024; // 1MB
 
 pub enum InputCheck {
     Ok,
+    Warn,
     TooLarge,
     Empty,
 }
@@ -11,8 +12,10 @@ pub fn check_input(input: &str) -> InputCheck {
     let len = input.len();
     if len == 0 {
         InputCheck::Empty
-    } else if len > WARN_INPUT {
+    } else if len > MAX_INPUT {
         InputCheck::TooLarge
+    } else if len > WARN_INPUT {
+        InputCheck::Warn
     } else {
         InputCheck::Ok
     }
@@ -23,7 +26,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_check_input_ok_for_normal_input() {
+    fn accepts_normal_input() {
         assert!(matches!(check_input("normal text"), InputCheck::Ok));
         assert!(matches!(
             check_input(&"a".repeat(1024 * 1024)),
@@ -32,7 +35,19 @@ mod tests {
     }
 
     #[test]
-    fn test_check_input_toolarge_for_gt_16mb() {
+    fn warns_for_input_greater_than_1mb() {
+        assert!(matches!(
+            check_input(&"a".repeat(WARN_INPUT + 1)),
+            InputCheck::Warn
+        ));
+        assert!(matches!(
+            check_input(&"a".repeat(MAX_INPUT)),
+            InputCheck::Warn
+        ));
+    }
+
+    #[test]
+    fn rejects_input_greater_than_16mb() {
         let big = "a".repeat(MAX_INPUT + 1);
         assert!(matches!(check_input(&big), InputCheck::TooLarge));
     }

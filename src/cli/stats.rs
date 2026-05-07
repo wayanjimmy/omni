@@ -124,7 +124,7 @@ fn shorten_command(cmd: &str, max_len: usize) -> String {
 
 fn agent_display_name(agent_id: &str) -> &str {
     match agent_id {
-        "claude_code" | "claude" | "unknown" | "terminal" => "Claude Code",
+        "claude_code" | "claude" => "Claude Code",
         "cursor" => "Cursor AI",
         "zed" => "Zed Editor",
         "cline" => "Cline",
@@ -136,6 +136,7 @@ fn agent_display_name(agent_id: &str) -> &str {
         "openclaw" => "OpenClaw",
         "antigravity" => "Antigravity",
         "vscode" => "VS Code",
+        "unknown" | "terminal" | "" => "Terminal",
         other => other,
     }
 }
@@ -318,18 +319,35 @@ fn run_default(store: &Store) -> Result<()> {
 
     // Agent Distribution
     let agent_data = store.get_agent_breakdown(0).unwrap_or_default();
-    if !agent_data.is_empty() {
+
+    // Group by display name
+    let mut grouped_agents: HashMap<String, (u64, u64, u64)> = HashMap::new();
+    for (id, count, input, output) in &agent_data {
+        if id == "unknown" || id == "terminal" || id.is_empty() {
+            continue;
+        }
+        let name = agent_display_name(id).to_string();
+        let entry = grouped_agents.entry(name).or_insert((0, 0, 0));
+        entry.0 += count;
+        entry.1 += input;
+        entry.2 += output;
+    }
+
+    if !grouped_agents.is_empty() {
         let total_cmds: u64 = agent_data.iter().map(|(_, c, _, _)| c).sum();
         println!("\n  {}", "Agent Distribution:".bold().bright_white());
-        for (agent_id, count, input, output) in &agent_data {
-            let name = agent_display_name(agent_id);
+
+        let mut sorted_agents: Vec<_> = grouped_agents.into_iter().collect();
+        sorted_agents.sort_by_key(|a| std::cmp::Reverse(a.1.0));
+
+        for (name, (count, input, output)) in sorted_agents {
             let pct = if total_cmds > 0 {
-                *count as f64 / total_cmds as f64 * 100.0
+                count as f64 / total_cmds as f64 * 100.0
             } else {
                 0.0
             };
-            let savings = if *input > 0 {
-                100.0 * (1.0 - *output as f64 / *input as f64)
+            let savings = if input > 0 {
+                100.0 * (1.0 - output as f64 / input as f64)
             } else {
                 0.0
             };
@@ -539,7 +557,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
                 .get(&display_name)
                 .and_then(|agents| agents.iter().max_by_key(|(_, calls)| *calls))
                 .map(|(agent_id, _)| agent_display_name(agent_id))
-                .unwrap_or("Claude Code");
+                .unwrap_or("Terminal");
 
             println!(
                 "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {}{}",
@@ -617,7 +635,21 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
 
     // Agent Distribution
     let agent_data = store.get_agent_breakdown(since).unwrap_or_default();
-    if !agent_data.is_empty() {
+
+    // Group by display name
+    let mut grouped_agents: HashMap<String, (u64, u64, u64)> = HashMap::new();
+    for (id, count, input, output) in &agent_data {
+        if id == "unknown" || id == "terminal" || id.is_empty() {
+            continue;
+        }
+        let name = agent_display_name(id).to_string();
+        let entry = grouped_agents.entry(name).or_insert((0, 0, 0));
+        entry.0 += count;
+        entry.1 += input;
+        entry.2 += output;
+    }
+
+    if !grouped_agents.is_empty() {
         let total_cmds: u64 = agent_data.iter().map(|(_, c, _, _)| c).sum();
         println!("\n {}", "Agent Distribution:".bold().bright_white());
         println!(
@@ -632,15 +664,18 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
             "──".bright_black(),
             "────────────── ────── ─────── ────────────────────".bright_black()
         );
-        for (agent_id, count, input, output) in &agent_data {
-            let name = agent_display_name(agent_id);
+
+        let mut sorted_agents: Vec<_> = grouped_agents.into_iter().collect();
+        sorted_agents.sort_by_key(|a| std::cmp::Reverse(a.1.0));
+
+        for (name, (count, input, output)) in sorted_agents {
             let pct = if total_cmds > 0 {
-                *count as f64 / total_cmds as f64 * 100.0
+                count as f64 / total_cmds as f64 * 100.0
             } else {
                 0.0
             };
-            let savings = if *input > 0 {
-                100.0 * (1.0 - *output as f64 / *input as f64)
+            let savings = if input > 0 {
+                100.0 * (1.0 - output as f64 / input as f64)
             } else {
                 0.0
             };
@@ -838,7 +873,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_format_bytes_semua_ranges() {
+    fn test_format_bytes_handles_all_ranges() {
         assert_eq!(format_bytes(0), "0 B");
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(1023), "1023 B");
@@ -857,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn test_est_cost_usd_kalkulasi_benar() {
+    fn test_est_cost_usd_returns_expected_value() {
         let expected_price_per_m = (3.0 + 3.0 + 2.5) / 3.0; // ~2.833
 
         let cost = est_cost_usd(3_800_000); // 1M tokens
@@ -870,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_default_not_crash_jika_db_kosong() {
+    fn test_stats_default_does_not_crash_when_db_is_empty() {
         let tmp = NamedTempFile::new().unwrap();
         let store = Store::open_path(tmp.path()).unwrap();
         let args: Vec<String> = vec!["stats".into()];
@@ -879,7 +914,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_detail_not_crash_jika_db_kosong() {
+    fn test_stats_detail_does_not_crash_when_db_is_empty() {
         let tmp = NamedTempFile::new().unwrap();
         let store = Store::open_path(tmp.path()).unwrap();
         let args: Vec<String> = vec!["stats".into(), "--detail".into()];
@@ -888,7 +923,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_json_not_crash_jika_db_kosong() {
+    fn test_stats_json_does_not_crash_when_db_is_empty() {
         let tmp = NamedTempFile::new().unwrap();
         let store = Store::open_path(tmp.path()).unwrap();
         let args: Vec<String> = vec!["stats".into(), "--json".into()];

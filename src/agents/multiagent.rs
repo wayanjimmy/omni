@@ -66,8 +66,8 @@ pub fn detect_agent_id() -> String {
     {
         return "vscode".to_string();
     }
-    // Default: claude_code (most common OMNI usage)
-    "claude_code".to_string()
+    // Default: terminal (generic shell usage)
+    "terminal".to_string()
 }
 
 /// Sync current session state to the shared agent_sessions table
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn test_detect_agent_id_default_and_override() {
         // Combined into one test to avoid env var race conditions in parallel execution.
-        // Test default: Without OMNI_AGENT_ID, should default to claude_code
+        // Test default: Without OMNI_AGENT_ID, should default to terminal
         unsafe {
             std::env::remove_var("OMNI_AGENT_ID");
             std::env::remove_var("CURSOR_TRACE_ID");
@@ -266,7 +266,7 @@ mod tests {
             std::env::remove_var("AIDER_SESSION");
         }
         let id = detect_agent_id();
-        assert_eq!(id, "claude_code");
+        assert_eq!(id, "terminal");
 
         // Test override: OMNI_AGENT_ID takes priority
         unsafe {
