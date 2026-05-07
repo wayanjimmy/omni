@@ -30,6 +30,10 @@ pub fn process_payload(
 ) -> Option<String> {
     let normalized = crate::hooks::normalize::normalize(input_str)?;
 
+    if crate::guard::env::is_passthrough() {
+        return None;
+    }
+
     let content = normalized.content;
 
     let config = crate::guard::config::load_config();

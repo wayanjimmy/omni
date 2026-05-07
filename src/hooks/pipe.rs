@@ -38,8 +38,9 @@ struct PipelineResult {
 
 impl PipelineResult {
     fn best_output(&self) -> &str {
-        if self.output.len() >= self.input_text.len() {
-            &self.input_text // 100% Passthrough fallback maintaining limits correctly
+        let guardrail_len = self.input_text.len() * 95 / 100;
+        if self.output.len() >= guardrail_len {
+            &self.input_text // Guardrail: never emit output ~same size as input
         } else {
             &self.output
         }
@@ -85,6 +86,11 @@ pub fn run_inner<R: Read, W: Write, E: Write>(
             error,
             "[omni: Warning] Large input detected; processing may take longer..."
         )?;
+    }
+
+    if crate::guard::env::is_passthrough() {
+        output.write_all(input_text.as_bytes())?;
+        return Ok(());
     }
 
     // Phase 3: Transcript Begin
@@ -605,6 +611,27 @@ fn extract_command_from_pipeline(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_output_guardrail_passthrough_when_reduction_too_small() {
+        let input_text = "a".repeat(1000);
+        let output = "b".repeat(960); // 4% reduction only
+        let res = PipelineResult {
+            session_id: "s".to_string(),
+            output,
+            filter_name: "f".to_string(),
+            rewind_hash: None,
+            segments_kept: 0,
+            segments_dropped: 0,
+            input_text: input_text.clone(),
+            start_time: Instant::now(),
+            collapse_savings: None,
+            project_path: ".".to_string(),
+            route: Route::Keep,
+        };
+
+        assert_eq!(res.best_output(), input_text.as_str());
+    }
 
     #[test]
     fn test_pipe_mode_distils_git_diff() {

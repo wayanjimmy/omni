@@ -67,6 +67,20 @@ pub fn is_quiet() -> bool {
     env::vars().any(|(k, _)| k.eq_ignore_ascii_case("OMNI_QUIET"))
 }
 
+/// Returns true if OMNI_PASSTHROUGH is enabled (1/true/yes).
+/// When enabled, OMNI will bypass distillation and emit raw output.
+pub fn is_passthrough() -> bool {
+    env::vars().any(|(k, v)| {
+        if !k.eq_ignore_ascii_case("OMNI_PASSTHROUGH") {
+            return false;
+        }
+        matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +125,16 @@ mod tests {
 
         assert!(has_path);
         assert!(has_normal);
+    }
+
+    #[test]
+    fn test_is_passthrough_enabled_by_value() {
+        std::env::set_var("OMNI_PASSTHROUGH", "1");
+        assert!(is_passthrough());
+        std::env::set_var("OMNI_PASSTHROUGH", "true");
+        assert!(is_passthrough());
+        std::env::set_var("OMNI_PASSTHROUGH", "0");
+        assert!(!is_passthrough());
+        std::env::remove_var("OMNI_PASSTHROUGH");
     }
 }

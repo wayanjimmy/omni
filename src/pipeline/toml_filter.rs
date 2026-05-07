@@ -4,8 +4,8 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
 use std::hash::{Hash, Hasher};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 #[derive(RustEmbed)]
@@ -631,10 +631,12 @@ struct FiltersCache {
 static ALL_FILTERS_CACHE: OnceLock<Mutex<FiltersCache>> = OnceLock::new();
 
 pub fn load_all_filters() -> Vec<TomlFilter> {
-    let cache = ALL_FILTERS_CACHE.get_or_init(|| Mutex::new(FiltersCache {
-        fingerprint: 0,
-        filters: Vec::new(),
-    }));
+    let cache = ALL_FILTERS_CACHE.get_or_init(|| {
+        Mutex::new(FiltersCache {
+            fingerprint: 0,
+            filters: Vec::new(),
+        })
+    });
 
     let fingerprint = compute_filters_fingerprint();
     let mut guard = cache.lock().unwrap();

@@ -52,8 +52,7 @@ fn looks_like_env_assignment(token: &str) -> bool {
     if key.is_empty() {
         return false;
     }
-    key.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn shell_split_tokens(input: &str, max_tokens: usize) -> Vec<String> {
@@ -128,6 +127,38 @@ fn shell_split_tokens(input: &str, max_tokens: usize) -> Vec<String> {
     }
 
     tokens
+}
+
+fn should_passthrough_config_output(command: &str, input: &str) -> bool {
+    let line_count = input.lines().count();
+    if line_count > 500 {
+        return false;
+    }
+
+    let tokens = shell_split_tokens(command, 32);
+    if tokens.is_empty() {
+        return false;
+    }
+
+    let candidate_path = tokens
+        .iter()
+        .rev()
+        .find(|t| {
+            let s = t.as_str();
+            !s.is_empty() && s != "cat" && s != "--" && !s.starts_with('-')
+        })
+        .map(|s| s.to_string());
+
+    let Some(path) = candidate_path else {
+        return false;
+    };
+
+    let lower = path.to_lowercase();
+    lower.ends_with(".env")
+        || lower.ends_with(".toml")
+        || lower.ends_with(".yaml")
+        || lower.ends_with(".yml")
+        || lower.ends_with(".json")
 }
 
 /// Distill output based on command
@@ -269,6 +300,11 @@ pub fn distill_with_command(
         return cloud::CloudDistiller.distill(segments, input, session);
     }
 
+    // Config file protection: avoid over-distilling small configs
+    if base == "cat" && should_passthrough_config_output(command, input) {
+        return input.to_string();
+    }
+
     // System ops → SystemOpsDistiller
     if matches!(
         base.as_str(),
@@ -320,12 +356,27 @@ mod tests {
             "/usr/local/bin/cargo"
         );
         assert_eq!(extract_base_executable("'cargo' test"), "cargo");
-        assert_eq!(extract_base_executable("`/usr/bin/python3` -V"), "/usr/bin/python3");
-        assert_eq!(extract_base_executable("RUST_BACKTRACE=1 cargo test"), "cargo");
+        assert_eq!(
+            extract_base_executable("`/usr/bin/python3` -V"),
+            "/usr/bin/python3"
+        );
+        assert_eq!(
+            extract_base_executable("RUST_BACKTRACE=1 cargo test"),
+            "cargo"
+        );
         assert_eq!(
             extract_base_executable("env FOO=1 \"/path/to/git\" status"),
             "/path/to/git"
         );
+    }
+
+    #[test]
+    fn test_cat_small_config_passthrough() {
+        let input = "[db]\nurl = \"postgres://example\"\nmax_connections = 10\n";
+        let cmd = "cat config.toml";
+        let segments = scorer::score_with_command(input, cmd, None);
+        let output = distill_with_command(&segments, input, cmd, None);
+        assert_eq!(output, input);
     }
 
     macro_rules! snapshot_test {
