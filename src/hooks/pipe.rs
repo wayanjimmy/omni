@@ -475,7 +475,7 @@ fn emit_output<W: Write, E: Write>(
             "{} {:.1}% reduction ({} → {}) {}ms",
             "⏺".cyan(),
             reduction,
-            crate::cli::stats::format_bytes(result.input_text.len() as u64).gray(),
+            crate::cli::stats::format_bytes(result.input_text.len() as u64).bright_black(),
             crate::cli::stats::format_bytes(result.best_output().len() as u64).green(),
             elapsed.to_string().bright_black()
         );
