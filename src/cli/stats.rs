@@ -124,7 +124,7 @@ fn shorten_command(cmd: &str, max_len: usize) -> String {
 
 fn agent_display_name(agent_id: &str) -> &str {
     match agent_id {
-        "claude_code" | "claude" | "unknown" | "terminal" => "Claude Code",
+        "claude_code" | "claude" => "Claude Code",
         "cursor" => "Cursor AI",
         "zed" => "Zed Editor",
         "cline" => "Cline",
@@ -136,6 +136,7 @@ fn agent_display_name(agent_id: &str) -> &str {
         "openclaw" => "OpenClaw",
         "antigravity" => "Antigravity",
         "vscode" => "VS Code",
+        "unknown" | "terminal" | "" => "Terminal",
         other => other,
     }
 }
@@ -318,10 +319,17 @@ fn run_default(store: &Store) -> Result<()> {
 
     // Agent Distribution
     let agent_data = store.get_agent_breakdown(0).unwrap_or_default();
-    if !agent_data.is_empty() {
+    let has_real_agents = agent_data
+        .iter()
+        .any(|(id, _, _, _)| id != "unknown" && id != "terminal" && !id.is_empty());
+
+    if has_real_agents {
         let total_cmds: u64 = agent_data.iter().map(|(_, c, _, _)| c).sum();
         println!("\n  {}", "Agent Distribution:".bold().bright_white());
         for (agent_id, count, input, output) in &agent_data {
+            if agent_id == "unknown" || agent_id == "terminal" || agent_id.is_empty() {
+                continue;
+            }
             let name = agent_display_name(agent_id);
             let pct = if total_cmds > 0 {
                 *count as f64 / total_cmds as f64 * 100.0
@@ -539,7 +547,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
                 .get(&display_name)
                 .and_then(|agents| agents.iter().max_by_key(|(_, calls)| *calls))
                 .map(|(agent_id, _)| agent_display_name(agent_id))
-                .unwrap_or("Claude Code");
+                .unwrap_or("Terminal");
 
             println!(
                 "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {}{}",
@@ -617,7 +625,11 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
 
     // Agent Distribution
     let agent_data = store.get_agent_breakdown(since).unwrap_or_default();
-    if !agent_data.is_empty() {
+    let has_real_agents = agent_data
+        .iter()
+        .any(|(id, _, _, _)| id != "unknown" && id != "terminal" && !id.is_empty());
+
+    if has_real_agents {
         let total_cmds: u64 = agent_data.iter().map(|(_, c, _, _)| c).sum();
         println!("\n {}", "Agent Distribution:".bold().bright_white());
         println!(
@@ -633,6 +645,9 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
             "────────────── ────── ─────── ────────────────────".bright_black()
         );
         for (agent_id, count, input, output) in &agent_data {
+            if agent_id == "unknown" || agent_id == "terminal" || agent_id.is_empty() {
+                continue;
+            }
             let name = agent_display_name(agent_id);
             let pct = if total_cmds > 0 {
                 *count as f64 / total_cmds as f64 * 100.0
