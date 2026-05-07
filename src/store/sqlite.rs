@@ -247,7 +247,7 @@ impl Store {
                 rewind_hash  TEXT DEFAULT '',
                 command      TEXT DEFAULT '',
                 project_path TEXT DEFAULT '',
-                agent_id     TEXT DEFAULT 'claude_code'
+                agent_id     TEXT DEFAULT 'unknown'
             );
             CREATE INDEX IF NOT EXISTS idx_dist_ts ON distillations(ts);
             CREATE INDEX IF NOT EXISTS idx_dist_session ON distillations(session_id);
@@ -384,11 +384,11 @@ impl Store {
                     rewind_hash  TEXT DEFAULT '',
                     command      TEXT DEFAULT '',
                     project_path TEXT DEFAULT '',
-                    agent_id     TEXT DEFAULT 'claude_code'
+                    agent_id     TEXT DEFAULT 'unknown'
                 );
                 INSERT INTO distillations 
                 (id, session_id, ts, filter_name, input_bytes, output_bytes, route, score, context_score, latency_ms, rewind_hash, command, project_path, agent_id)
-                SELECT id, session_id, ts, filter_name, input_bytes, output_bytes, route, score, context_score, latency_ms, rewind_hash, command, '', 'claude_code' 
+                SELECT id, session_id, ts, filter_name, input_bytes, output_bytes, route, score, context_score, latency_ms, rewind_hash, command, '', 'unknown' 
                 FROM distillations_old;
                 DROP TABLE distillations_old;
                 CREATE INDEX idx_dist_ts ON distillations(ts);
@@ -412,7 +412,7 @@ impl Store {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE distillations ADD COLUMN agent_id TEXT DEFAULT 'claude_code'",
+            "ALTER TABLE distillations ADD COLUMN agent_id TEXT DEFAULT 'unknown'",
             [],
         );
 
@@ -796,7 +796,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT
-                COALESCE(agent_id, 'claude_code') as agent,
+                COALESCE(agent_id, 'unknown') as agent,
                 COUNT(*) as calls,
                 COALESCE(SUM(input_bytes), 0) as total_input,
                 COALESCE(SUM(output_bytes), 0) as total_output
@@ -832,7 +832,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT
                 command,
-                COALESCE(agent_id, 'claude_code') as agent,
+                COALESCE(agent_id, 'unknown') as agent,
                 COUNT(*) as calls,
                 COALESCE(SUM(input_bytes), 0) as total_input,
                 COALESCE(SUM(output_bytes), 0) as total_output

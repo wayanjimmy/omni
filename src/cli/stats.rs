@@ -319,25 +319,35 @@ fn run_default(store: &Store) -> Result<()> {
 
     // Agent Distribution
     let agent_data = store.get_agent_breakdown(0).unwrap_or_default();
-    let has_real_agents = agent_data
-        .iter()
-        .any(|(id, _, _, _)| id != "unknown" && id != "terminal" && !id.is_empty());
 
-    if has_real_agents {
+    // Group by display name
+    let mut grouped_agents: HashMap<String, (u64, u64, u64)> = HashMap::new();
+    for (id, count, input, output) in &agent_data {
+        if id == "unknown" || id == "terminal" || id.is_empty() {
+            continue;
+        }
+        let name = agent_display_name(id).to_string();
+        let entry = grouped_agents.entry(name).or_insert((0, 0, 0));
+        entry.0 += count;
+        entry.1 += input;
+        entry.2 += output;
+    }
+
+    if !grouped_agents.is_empty() {
         let total_cmds: u64 = agent_data.iter().map(|(_, c, _, _)| c).sum();
         println!("\n  {}", "Agent Distribution:".bold().bright_white());
-        for (agent_id, count, input, output) in &agent_data {
-            if agent_id == "unknown" || agent_id == "terminal" || agent_id.is_empty() {
-                continue;
-            }
-            let name = agent_display_name(agent_id);
+
+        let mut sorted_agents: Vec<_> = grouped_agents.into_iter().collect();
+        sorted_agents.sort_by_key(|a| std::cmp::Reverse(a.1.0));
+
+        for (name, (count, input, output)) in sorted_agents {
             let pct = if total_cmds > 0 {
-                *count as f64 / total_cmds as f64 * 100.0
+                count as f64 / total_cmds as f64 * 100.0
             } else {
                 0.0
             };
-            let savings = if *input > 0 {
-                100.0 * (1.0 - *output as f64 / *input as f64)
+            let savings = if input > 0 {
+                100.0 * (1.0 - output as f64 / input as f64)
             } else {
                 0.0
             };
@@ -625,11 +635,21 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
 
     // Agent Distribution
     let agent_data = store.get_agent_breakdown(since).unwrap_or_default();
-    let has_real_agents = agent_data
-        .iter()
-        .any(|(id, _, _, _)| id != "unknown" && id != "terminal" && !id.is_empty());
 
-    if has_real_agents {
+    // Group by display name
+    let mut grouped_agents: HashMap<String, (u64, u64, u64)> = HashMap::new();
+    for (id, count, input, output) in &agent_data {
+        if id == "unknown" || id == "terminal" || id.is_empty() {
+            continue;
+        }
+        let name = agent_display_name(id).to_string();
+        let entry = grouped_agents.entry(name).or_insert((0, 0, 0));
+        entry.0 += count;
+        entry.1 += input;
+        entry.2 += output;
+    }
+
+    if !grouped_agents.is_empty() {
         let total_cmds: u64 = agent_data.iter().map(|(_, c, _, _)| c).sum();
         println!("\n {}", "Agent Distribution:".bold().bright_white());
         println!(
@@ -644,18 +664,18 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
             "──".bright_black(),
             "────────────── ────── ─────── ────────────────────".bright_black()
         );
-        for (agent_id, count, input, output) in &agent_data {
-            if agent_id == "unknown" || agent_id == "terminal" || agent_id.is_empty() {
-                continue;
-            }
-            let name = agent_display_name(agent_id);
+
+        let mut sorted_agents: Vec<_> = grouped_agents.into_iter().collect();
+        sorted_agents.sort_by_key(|a| std::cmp::Reverse(a.1.0));
+
+        for (name, (count, input, output)) in sorted_agents {
             let pct = if total_cmds > 0 {
-                *count as f64 / total_cmds as f64 * 100.0
+                count as f64 / total_cmds as f64 * 100.0
             } else {
                 0.0
             };
-            let savings = if *input > 0 {
-                100.0 * (1.0 - *output as f64 / *input as f64)
+            let savings = if input > 0 {
+                100.0 * (1.0 - output as f64 / input as f64)
             } else {
                 0.0
             };
