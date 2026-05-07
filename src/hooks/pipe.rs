@@ -377,13 +377,13 @@ fn persist<E: Write>(
         s.record_distillation(
             &result.session_id,
             &distill_result,
-            command_to_use.unwrap_or(""),
+            command_name.unwrap_or(""),
             &result.project_path,
             &agent_id,
         );
         s.record_trace(
             &result.session_id,
-            command_to_use.unwrap_or(""),
+            command_name.unwrap_or(""),
             &agent_id,
             &result.project_path,
             &result.input_text,
