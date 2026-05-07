@@ -31,6 +31,7 @@ fn print_help() {
         "--antigravity".cyan()
     );
     println!("  {: <14} Configure Hermes Agent", "--hermes".cyan());
+    println!("  {: <14} Configure VS Code (MCP)", "--vscode".cyan());
 
     println!("\n{}", "CLAUDE SPECIFIC FLAGS:".bold().bright_white());
     println!(
@@ -83,6 +84,7 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
     let mut is_openclaw = args.iter().any(|a| a == "--openclaw");
     let mut is_antigravity = args.iter().any(|a| a == "--antigravity");
     let mut is_hermes = args.iter().any(|a| a == "--hermes");
+    let mut is_vscode = args.iter().any(|a| a == "--vscode");
 
     let mut is_hook = args.iter().any(|a| a == "--hook");
     let mut is_mcp = args.iter().any(|a| a == "--mcp");
@@ -109,6 +111,7 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         && !is_openclaw
         && !is_antigravity
         && !is_hermes
+        && !is_vscode
         && !is_status
         && !is_uninstall
         && !is_hook
@@ -132,10 +135,11 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         println!("  [{}] OpenClaw", "10".cyan());
         println!("  [{}] Antigravity IDE", "11".cyan());
         println!("  [{}] Hermes Agent", "12".cyan());
+        println!("  [{}] VS Code (MCP)", "13".cyan());
         println!("  [{}]  Quit\n", "q".yellow());
 
         use std::io::Write;
-        print!("Select an option [1-12, q]: ");
+        print!("Select an option [1-13, q]: ");
         std::io::stdout().flush()?;
 
         let mut input = String::new();
@@ -157,6 +161,7 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
             "10" => is_openclaw = true,
             "11" => is_antigravity = true,
             "12" => is_hermes = true,
+            "13" => is_vscode = true,
             _ => return Ok(()),
         }
         println!();
@@ -176,6 +181,7 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
             "openclaw",
             "antigravity",
             "hermes",
+            "vscode",
         ]
     } else {
         let mut ids = Vec::new();
@@ -214,6 +220,9 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         }
         if is_hermes {
             ids.push("hermes");
+        }
+        if is_vscode {
+            ids.push("vscode");
         }
         ids
     };
