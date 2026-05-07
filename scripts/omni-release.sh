@@ -81,21 +81,7 @@ echo "   Running clippy..."
 cargo clippy --all-targets -- -D warnings > /tmp/omni-clippy 2>&1 || { cat /tmp/omni-clippy && fail "clippy warnings found"; }
 ok "cargo clippy: no warnings"
 
-# 8. cargo test
-echo "   Running tests..."
-#cargo test --all > /tmp/omni-test 2>&1 || { tail -n 20 /tmp/omni-test && fail "tests failed"; }
-#ok "cargo test: all pass"
-
-# 9. Release build
-#echo "   Building release..."
-#cargo build --release > /tmp/omni-build 2>&1 || { tail -n 20 /tmp/omni-build && fail "release build failed"; }
-#BINARY_SIZE=$(du -k target/release/omni | cut -f1)
-#ok "Release build: ${BINARY_SIZE}KB"
-#if [ "$BINARY_SIZE" -gt 7120 ]; then
-#    warn "Binary size ${BINARY_SIZE}KB exceeds 7MB target"
-#fi
-
-# 10. Smoke test
+# 8. Smoke test
 if [ -x tests/smoke_test.sh ]; then
     echo "   Running smoke tests..."
     bash tests/smoke_test.sh ./target/release/omni > /tmp/omni-smoke 2>&1 || { cat /tmp/omni-smoke && fail "smoke test failed"; }

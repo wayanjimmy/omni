@@ -235,40 +235,42 @@ All tests in OMNI must follow idiomatic Rust testing conventions.
 
 ### Test Naming Conventions
 
-Use descriptive, behavior-oriented names in `snake_case`.
+Inside `#[cfg(test)]` modules, drop the `test_` prefix from function names. Use action-oriented, behavioral names in `snake_case`.
 
 Preferred patterns:
 
 ```rust
-test_<function>_<expected_behavior>
-test_<behavior>_when_<condition>
-test_<action>_<result>
+fn <action>_<subject>_<condition>()
+fn <expected_behavior>()
+fn <action>_<result>()
 ```
 
 Good examples:
 
 ```rust
-test_load_config_returns_default_when_file_missing
-test_session_summary_excludes_sensitive_data
-test_pipe_mode_treats_exit_0_as_ok
-test_cleanup_old_removes_stale_entries
+fn returns_default_when_config_missing()
+fn excludes_sensitive_data_from_summary()
+fn treats_exit_0_as_ok()
+fn removes_stale_entries()
+fn ignores_non_matching_payloads()
+fn preserves_errors_during_collapse()
 ```
 
 Avoid:
 
 ```rust
-test_config_ok
-test_valid_json
-test_works
-test_benar
-test_handle_it
+fn test_config_ok           // Redundant 'test_' prefix
+fn test_benar               // Indonesian word
+fn handles_it               // Vague 'handles'
+fn valid_json               // No action verb
 ```
 
 Rules:
 
-*   **English only**: No Indonesian words.
-*   **Explicit assertion naming**: Prefer `returns_expected_*`, `does_not_crash`, `preserves_*`, `skips_*`.
-*   **Avoid vague words**: `works`, `valid`, `correct`, `bagus`, `handles`.
+*   **No `test_` prefix**: Since the function is already inside a `#[cfg(test)]` module and marked with `#[test]`, the prefix is redundant.
+*   **English only**: No Indonesian words (e.g., avoid `selalu`, `dengan`, `tanpa`).
+*   **Action Verbs**: Start with or include clear verbs: `returns`, `preserves`, `skips`, `rejects`, `detects`, `computes`.
+*   **Avoid vague words**: `works`, `valid`, `correct`, `handles`.
 
 ### Test Design Principles
 

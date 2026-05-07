@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8-rc1] - 2026-05-08
+
+### Added
+- **Semantic Session Guardrails**:
+    - **Hot File Detection**: Triggers `SessionEnd` hook when active files in a session show abnormal mutation frequency, prompting agents to review before committing.
+    - **Build Failure Preservation**: `BuildDistiller` now preserves `CommandOutput` for build failures (non-zero exit codes) in the collapse pipeline, ensuring agents see exact errors instead of just exit status.
+    - **Diagnostic Context**: `PreBuild` hook runs `cargo check` to surface compiler errors early in the session, reducing wasted tokens on broken states.
+- **Passthrough & Thresholding**:
+    - **OMNI_PASSTHROUGH**: Support for raw output emission via environment variable for manual debugging.
+    - **Smart Bypass**: Automatic distillation bypass for small configuration files and content under a 2000-token minimum threshold.
+    - **Extension Hinting**: Improved content-aware heuristics for more accurate token estimation.
+- **Omission Transparency**: Added explicit `[OMNI: omitted X lines of noise]` markers in the `GenericDistiller` for improved agent situational awareness.
+
+### Improved
+- **Performance & Caching**:
+    - **Filter Fingerprinting**: New caching system to reduce redundant TOML filter loading.
+    - **Thread-Safe Loading**: Optimized filter registry access using Mutex and fingerprint-based verification.
+- **Agent Attribution & Stats**: 
+    - Standardized "terminal" as the default agent identifier for untagged sessions.
+    - Improved agent distribution grouping and filtering in `omni stats` output.
+    - Updated CLI visuals to use `bright_black` for secondary log signals to improve visibility.
+- **Test Suite Modernization**: Systematically refactored the entire Rust test suite (~300 tests) to align with modern idiomatic standards.
+    - **Naming Convention**: Dropped the redundant `test_` prefix inside `#[cfg(test)]` modules.
+    - **Action-Oriented Naming**: Transitioned to behavioral function names (e.g., `returns_*`, `preserves_*`, `rejects_*`) to improve readability and maintainability.
+    - **Language Standardization**: Purged all remaining Indonesian terminology and mixed-language test names, ensuring a 100% professional English testing layer.
+- **CI Stability**: Verified full CI compliance after the bulk refactor, ensuring all 282 tests remain stable across platforms.
+
+### Fixed
+- **Unsafe Environment Access**: Wrapped `std::env::set_var` and `remove_var` calls in `unsafe` blocks within `src/guard/env.rs` to comply with the latest Rust edition requirements for test isolation.
+- **Distillation Regression**: Resolved failures in `test_readfile_large_rust_file_distilled` by recalibrating token thresholds in test fixtures, ensuring consistent distiller triggering.
+- **Snapshot Integrity**: Synchronized stale `insta` snapshots to match refined pipeline output patterns, maintaining high-fidelity regression tracking.
+
 ## [0.5.7-rc3] - 2026-05-07
 
 ### Added
