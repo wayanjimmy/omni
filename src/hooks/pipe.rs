@@ -61,7 +61,9 @@ pub fn run_inner<R: Read, W: Write, E: Write>(
     } else {
         None
     };
-    let command_to_use = command_name.or(detected_cmd.as_deref());
+    let command_to_use = command_name.or(detected_cmd.as_deref()).map(|c| {
+        c.strip_prefix("omni exec ").unwrap_or(c)
+    });
 
     let start_time = Instant::now();
 
@@ -98,27 +100,20 @@ pub fn run_inner<R: Read, W: Write, E: Write>(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
-    let command_stripped = command_to_use.map(|c| {
-        if let Some(stripped) = c.strip_prefix("omni exec ") {
-            stripped
-        } else {
-            c
-        }
-    });
-    transcript_begin(&session, &input_text, command_stripped, &mut error);
+    transcript_begin(&session, &input_text, command_to_use, &mut error);
 
     // Phase 4: Distill
     let result = distill(
         input_text,
         &session,
-        command_stripped,
+        command_to_use,
         start_time,
         store.as_deref(),
         project_path,
     );
 
     // Phase 5: Persist
-    persist(&result, &store, &session, command_stripped, &mut error);
+    persist(&result, &store, &session, command_to_use, &mut error);
 
     // Phase 6: Output
     emit_output(&result, &mut output, &mut error)?;
@@ -353,7 +348,7 @@ fn persist<E: Write>(
     result: &PipelineResult,
     store_opt: &Option<Arc<Store>>,
     session: &Option<Arc<Mutex<SessionState>>>,
-    command_name: Option<&str>,
+    command_to_use: Option<&str>,
     error: &mut E,
 ) {
     if let Some(s) = store_opt {
@@ -377,13 +372,13 @@ fn persist<E: Write>(
         s.record_distillation(
             &result.session_id,
             &distill_result,
-            command_name.unwrap_or(""),
+            command_to_use.unwrap_or(""),
             &result.project_path,
             &agent_id,
         );
         s.record_trace(
             &result.session_id,
-            command_name.unwrap_or(""),
+            command_to_use.unwrap_or(""),
             &agent_id,
             &result.project_path,
             &result.input_text,
@@ -393,7 +388,7 @@ fn persist<E: Write>(
         if let Some(sess) = session {
             let tracker = crate::session::tracker::SessionTracker::new(sess.clone(), s.clone());
             tracker.track_command(
-                command_name.unwrap_or(""),
+                command_to_use.unwrap_or(""),
                 &result.input_text,
                 &distill_result,
             );
