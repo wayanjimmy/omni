@@ -236,24 +236,11 @@ impl AgentIntegration for PiIntegration {
     }
 
     fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
-        let mut healthy = true;
         println!("\n  {}", "Pi Agent:".cyan());
 
         // 1. Pi binary
-        if let Some(_bin) = find_pi_binary() {
-            println!(
-                "   {:<15} {} {}",
-                "Binary:".bright_black(),
-                "installed".yellow(),
-                "[OK]".green().bold()
-            );
-        } else {
-            println!(
-                "   {:<15} not found on PATH {}",
-                "Binary:".bright_black(),
-                "[MISSING]".yellow().bold()
-            );
-            // Pi is optional — warn but don't fail doctor
+        if find_pi_binary().is_none() {
+            println!("   {:<15} {}", "Config:".bright_black(), "not configured".bright_black());
             return true;
         }
 
@@ -261,14 +248,14 @@ impl AgentIntegration for PiIntegration {
         let snapshot = PiSettingsSnapshot::load();
         if snapshot.has_omni_package() {
             println!(
-                "   {:<15} OMNI package registered {}",
-                "Package:".bright_black(),
+                "   {:<15} Pi Extension registered {}",
+                "Extension:".bright_black(),
                 "[OK]".green().bold()
             );
         } else {
             println!(
-                "   {:<15} not configured {}",
-                "Package:".bright_black(),
+                "   {:<15} {}",
+                "Extension:".bright_black(),
                 "[WARNING]".yellow().bold()
             );
             if fix_mode {
@@ -279,14 +266,13 @@ impl AgentIntegration for PiIntegration {
                 );
                 if let Err(e) = run_install_with_mode(&source, &PiInstallMode::Global) {
                     warnings.push(format!("Failed to install Pi package: {e}"));
-                    healthy = false;
                 }
             } else {
                 warnings.push(
-                    "Pi is installed but OMNI package is not configured. Run: omni init --pi"
-                        .to_string(),
+                    "Pi Extension is not registered. Run: omni init --pi".to_string(),
                 );
             }
+            return false;
         }
 
         // 3. Duplicate/legacy detection
@@ -332,10 +318,9 @@ impl AgentIntegration for PiIntegration {
                 "Pi settings at {} contain invalid JSON. Fix manually.",
                 pi_settings_path().display()
             ));
-            healthy = false;
         }
 
-        healthy
+        true
     }
 }
 
