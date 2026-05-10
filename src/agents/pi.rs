@@ -236,7 +236,7 @@ impl AgentIntegration for PiIntegration {
     }
 
     fn doctor_check(&self, fix_mode: bool, warnings: &mut Vec<String>) -> bool {
-        println!("\n  {}", "Pi Agent:".cyan());
+        println!("\n  {}", "Pi:".cyan());
 
         // 1. Pi binary
         if find_pi_binary().is_none() {
@@ -248,7 +248,7 @@ impl AgentIntegration for PiIntegration {
         let snapshot = PiSettingsSnapshot::load();
         if snapshot.has_omni_package() {
             println!(
-                "   {:<15} Pi Extension registered {}",
+                "   {:<15} {} installed",
                 "Extension:".bright_black(),
                 "[OK]".green().bold()
             );
