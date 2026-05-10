@@ -64,6 +64,14 @@ fn pi_settings_path() -> PathBuf {
         .join("settings.json")
 }
 
+/// Return the project-local Pi settings path (`.pi/settings.json` in CWD).
+fn pi_local_settings_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".pi")
+        .join("settings.json")
+}
+
 /// Return the legacy extension path that could cause double-loading.
 fn legacy_extension_path() -> PathBuf {
     dirs::home_dir()
@@ -81,11 +89,32 @@ struct PiSettingsSnapshot {
 }
 
 impl PiSettingsSnapshot {
+    /// Load settings, preferring whichever path contains an OMNI package reference.
+    /// Falls back to whichever file exists.
     fn load() -> Self {
-        let path = pi_settings_path();
-        let json = std::fs::read_to_string(&path)
+        let global_path = pi_settings_path();
+        let local_path = pi_local_settings_path();
+
+        let global_json = std::fs::read_to_string(&global_path)
             .ok()
             .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+
+        let local_json = std::fs::read_to_string(&local_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+
+        let (path, json) = if let Some(ref g) = global_json
+            && find_omni_references(g)
+        {
+            (global_path, global_json)
+        } else if let Some(ref l) = local_json
+            && find_omni_references(l)
+        {
+            (local_path, local_json)
+        } else {
+            (global_path, global_json.or(local_json))
+        };
+
         Self { _path: path, json }
     }
 
