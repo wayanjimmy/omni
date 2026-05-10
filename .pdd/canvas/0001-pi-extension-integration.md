@@ -100,7 +100,7 @@ The default path should be Pi package installation rather than manually adding a
 - [x] Install the Pi package by invoking Pi's installer with a git source, e.g. `pi install git:github.com/<owner>/omni`.
 - [x] Use `pi install git:github.com/<owner>/omni --local` for project-local installs.
 - [x] Do not manually edit `~/.pi/agent/settings.json` in the default path; Pi's installer owns that mutation.
-- [x] Detect likely legacy or duplicate OMNI Pi extension sources and warn after install.
+- [x] Detect duplicate OMNI Pi extension sources and warn after install.
 - [x] Preserve Pi runtime fail-open behavior in `plugins/pi/index.ts`.
 - [x] Preserve `OMNI_AGENT_ID=pi` for all OMNI subprocesses.
 - [x] Preserve mutation-tool skip behavior for `edit` and `write`.
@@ -167,13 +167,13 @@ The default path should be Pi package installation rather than manually adding a
 
 #### Task 4: Detect Pi package status and duplicates
 
-**What:** Read Pi settings only for status/doctor/double-load detection. Do not manually mutate settings in the normal install path; Pi's `install` command owns settings updates.
+**What:** Read Pi settings only for status/doctor detection. Do not manually mutate settings in the normal install path; Pi's `install` command owns settings updates.
 
 **Files:** `src/agents/pi.rs`
 
-**Verification:** Unit tests cover missing settings, existing package entries, explicit extension entries, old `pi-omni` package sources, legacy `~/.pi/agent/extensions/omni.ts`, and invalid JSON read failures reported as warnings.
+**Verification:** Unit tests cover missing settings, existing package entries, explicit extension entries, old `pi-omni` package sources, and invalid JSON read failures reported as warnings.
 
-**Result:** ✅ `PiSettingsSnapshot` checks both global (`~/.pi/agent/settings.json`) and project-local (`.pi/settings.json`) paths. Detects duplicates and legacy files.
+**Result:** ✅ `PiSettingsSnapshot` checks both global (`~/.pi/agent/settings.json`) and project-local (`.pi/settings.json`) paths. Detects duplicates.
 
 #### Task 5: Wire init flags
 
@@ -197,13 +197,13 @@ The default path should be Pi package installation rather than manually adding a
 
 #### Task 7: Add doctor checks
 
-**What:** Implement Pi `doctor_check` to report whether Pi is installed, whether an OMNI Pi package source is configured, whether duplicate OMNI package/extension sources exist, and whether legacy extension files exist.
+**What:** Implement Pi `doctor_check` to report whether Pi is installed, whether an OMNI Pi package source is configured, and whether duplicate OMNI package/extension sources exist.
 
 **Files:** `src/agents/pi.rs`, `src/cli/doctor.rs` if output changes are needed
 
-**Verification:** Tests or manual runs cover healthy package state, missing Pi binary, missing package entry, duplicate package/extension entries, and legacy `~/.pi/agent/extensions/omni.ts`.
+**Verification:** Tests or manual runs cover healthy package state, missing Pi binary, missing package entry, and duplicate package/extension entries.
 
-**Result:** ✅ Doctor output simplified to match other agents: `Pi:` header with `Extension:` status line. Detects local settings, duplicates, legacy files.
+**Result:** ✅ Doctor output simplified to match other agents: `Pi:` header with `Extension:` status line. Detects local settings and duplicates.
 
 #### Task 8: Tests
 
@@ -217,7 +217,7 @@ The default path should be Pi package installation rather than manually adding a
 
 #### Task 9: Docs and i18n
 
-**What:** Update user docs for Pi support, default `pi install git:*` integration, project-local install, manual install, reset, doctor, double-load warnings, and `omni` PATH requirements.
+**What:** Update user docs for Pi support, default `pi install git:*` integration, project-local install, manual install, reset, doctor, and `omni` PATH requirements.
 
 **Files:** `README.md`, `plugins/pi/README.md`, `i18n/README-ja.md`, `i18n/README-zh.md`, `i18n/README-ar.md`, `i18n/README-id.md`, `i18n/README-vi.md`, `i18n/README-ko.md`
 
@@ -278,7 +278,6 @@ The default path should be Pi package installation rather than manually adding a
 - `settings_file_exists: bool` — whether global Pi settings exist for diagnosis.
 - `package_registered: bool` — whether an OMNI package source appears installed.
 - `duplicate_sources: Vec<String>` — likely duplicate OMNI package/extension sources.
-- `legacy_sources: Vec<PathBuf>` — legacy paths such as `~/.pi/agent/extensions/omni.ts`.
 
 ### Relationships
 
@@ -351,7 +350,7 @@ Pi extension hooks
 3. `PiIntegration::install` verifies `pi` is available on `PATH`.
 4. `PiIntegration::install` runs `pi install git:github.com/wayanjimmy/omni@v0.6.0-pi-alpha`.
 5. Pi installs the package and updates its global settings.
-6. OMNI performs read-only duplicate/legacy detection and prints any warnings.
+6. OMNI performs read-only duplicate detection and prints any warnings.
 7. The command prints the package source and next-step guidance.
 
 #### Flow 2: Project-local install
@@ -375,14 +374,14 @@ Pi extension hooks
 1. User runs `omni reset --pi`.
 2. `src/cli/reset.rs` selects the `pi` integration.
 3. `PiIntegration::uninstall` prints exact manual cleanup guidance instead of editing settings blindly.
-4. Legacy or ambiguous user-owned Pi extension files are not deleted automatically.
+4. User-owned Pi settings files are not mutated automatically.
 
 ### Doctor Flow
 
 1. User runs `omni doctor`.
 2. `src/cli/doctor.rs` calls `PiIntegration::doctor_check` through `all_integrations()`.
-3. The check reports whether `pi` is available, whether an OMNI package source is configured, and whether duplicate/legacy OMNI Pi sources are detected.
-4. In fix mode, doctor may rerun `pi install git:github.com/wayanjimmy/omni@v0.6.0-pi-alpha`, but must not delete ambiguous user-managed files.
+3. The check reports whether `pi` is available, whether an OMNI package source is configured, and whether duplicate OMNI Pi sources are detected.
+4. In fix mode, doctor may rerun `pi install git:github.com/wayanjimmy/omni@v0.6.0-pi-alpha`.
 
 ### Patterns to Follow
 
@@ -446,14 +445,14 @@ omni --version
 
 | Risk | Likelihood | Impact | Mitigation | Fallback |
 |------|-----------|--------|------------|----------|
-| Pi loads OMNI twice | Medium | High | Use Pi package installer and detect legacy/package/manual sources after install | Ask user to remove old `~/.pi/agent/extensions/omni.ts` or duplicate package install |
+| Pi loads OMNI twice | Low | High | Use Pi package installer and detect duplicate sources after install | Ask user to remove duplicate package install entries |
 | `pi install git:*` fails due to network or git auth | Medium | Medium | Surface Pi's stderr and print manual command | User runs `pi install ./local/path` or retries with network/auth fixed |
 | Invalid `~/.pi/agent/settings.json` | Medium | Medium | Treat as doctor/status warning; do not overwrite | User fixes JSON manually and reruns Pi install |
 | Pi package removal command is unavailable or unclear | Medium | Medium | Do not edit settings blindly; print manual cleanup steps | User removes package via Pi or edits settings manually |
 | `omni` is not on PATH when Pi runs | Medium | Medium | Document PATH requirement and keep optional `omniPath` support in extension config | User configures Pi extension `omniPath` or launches Pi with corrected PATH |
 | Integration tests accidentally use globally installed `omni` | Medium | High | Prepend repo-local `target/release` or `target/debug` to `PATH` in tests | Fail the test if resolved `omni --version` or path does not match the test binary |
 | Installed Pi package becomes stale | Medium | Medium | `omni doctor --fix` may rerun `pi install git:github.com/wayanjimmy/omni@v0.6.0-pi-alpha` | User reruns `omni init --pi` |
-| Ambiguous legacy files are deleted accidentally | Low | High | Do not delete ambiguous legacy files automatically | Warn and require manual cleanup |
+
 
 ## S — Safeguards
 
@@ -471,7 +470,6 @@ omni --version
 
 - ❌ **DO NOT** overwrite invalid JSON in `~/.pi/agent/settings.json` from OMNI.
 - ❌ **DO NOT** remove arbitrary entries from Pi settings.
-- ❌ **DO NOT** delete legacy extension files automatically.
 - ❌ **DO NOT** add a second OMNI package source if a known OMNI Pi package/manual install is already detected without warning.
 
 ### Runtime Constraints
@@ -499,7 +497,6 @@ omni --version
 - [x] Missing `pi` binary returns an actionable error.
 - [x] Reads Pi settings for status without mutating them.
 - [x] Treats invalid JSON as a warning/error without overwriting it.
-- [x] Detects legacy `~/.pi/agent/extensions/omni.ts`.
 - [x] Detects duplicate OMNI package and direct extension references.
 - [x] Detects project-local `.pi/settings.json` in addition to global settings.
 
@@ -510,7 +507,7 @@ omni --version
 - [x] `omni init --pi --pi-manual` prints commands and does not invoke `pi`.
 - [x] `omni reset --pi` does not corrupt Pi settings when no safe Pi-native removal command is available.
 - [x] `omni doctor` reports healthy Pi integration after a package entry is present.
-- [x] `omni doctor --fix` can rerun Pi package installation without deleting ambiguous legacy files.
+- [x] `omni doctor --fix` can rerun Pi package installation.
 - [x] `pi list` shows the OMNI package as installed.
 
 ### TypeScript Verification
@@ -525,7 +522,6 @@ omni --version
 - [x] `omni --version` shows `omni 0.6.0-pi-alpha`.
 - [x] Clean install: `omni init --pi --pi-local` succeeds via Pi's package installer.
 - [x] Existing Pi settings: Pi's installer preserves unrelated settings.
-- [x] Legacy detection: init/doctor warns about possible double-load.
 - [x] Project-local mode: `omni init --pi --pi-local` installs through Pi's local mode.
 - [x] Manual mode: `omni init --pi --pi-manual` prints usable `pi install git:*` instructions.
 - [x] Pi runtime: extension loads once and invokes OMNI for session start, tool result, and pre-compact flows.
@@ -561,3 +557,4 @@ omni --version
 | 2026-05-10 | Fixed doctor to detect project-local Pi settings | Amp |
 | 2026-05-10 | Styled doctor output to match other agents (cyan header) | Amp |
 | 2026-05-10 | Created spike document for Pi package installer behavior | Amp |
+| 2026-05-10 | Removed all legacy extension handling (`~/.pi/agent/extensions/omni.ts` checks, warnings, function) | Amp |

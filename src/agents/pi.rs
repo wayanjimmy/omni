@@ -72,16 +72,6 @@ fn pi_local_settings_path() -> PathBuf {
         .join("settings.json")
 }
 
-/// Return the legacy extension path that could cause double-loading.
-fn legacy_extension_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".pi")
-        .join("agent")
-        .join("extensions")
-        .join("omni.ts")
-}
-
 /// Read-only parsed Pi settings for diagnostics.
 struct PiSettingsSnapshot {
     _path: PathBuf,
@@ -224,14 +214,7 @@ impl AgentIntegration for PiIntegration {
             "    1. Edit {} and remove the OMNI package entry.",
             pi_settings_path().display()
         );
-        println!(
-            "    2. Remove any stale files in {}.",
-            legacy_extension_path()
-                .parent()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "~/.pi/agent/extensions/".to_string())
-        );
-        println!("    3. Restart Pi to apply the changes.\n");
+        println!("    2. Restart Pi to apply the changes.\n");
         Ok(())
     }
 
@@ -275,7 +258,7 @@ impl AgentIntegration for PiIntegration {
             return false;
         }
 
-        // 3. Duplicate/legacy detection
+        // 3. Duplicate detection
         let duplicates = snapshot.duplicate_sources();
         if duplicates.len() > 1 {
             println!(
@@ -292,22 +275,7 @@ impl AgentIntegration for PiIntegration {
             );
         }
 
-        // 4. Legacy extension file
-        let legacy = legacy_extension_path();
-        if legacy.exists() {
-            println!(
-                "   {:<15} {} {}",
-                "Legacy:".bright_black(),
-                legacy.display(),
-                "[WARNING]".yellow().bold()
-            );
-            warnings.push(format!(
-                "Legacy Pi extension file found at {}. Remove it to prevent double-loading.",
-                legacy.display()
-            ));
-        }
-
-        // 5. Invalid settings JSON
+        // 4. Invalid settings JSON
         if snapshot.json.is_none() && pi_settings_path().exists() {
             println!(
                 "   {:<15} invalid JSON {}",
@@ -375,7 +343,7 @@ fn run_install_with_mode(source: &str, mode: &PiInstallMode) -> anyhow::Result<(
         "✓".green().bold()
     );
 
-    // Post-install: warn about duplicates and legacy files.
+    // Post-install: warn about duplicates.
     let snapshot = PiSettingsSnapshot::load();
     let duplicates = snapshot.duplicate_sources();
     if duplicates.len() > 1 {
@@ -390,20 +358,6 @@ fn run_install_with_mode(source: &str, mode: &PiInstallMode) -> anyhow::Result<(
         println!(
             "  {} Remove duplicate entries to prevent double-loading.",
             "→".cyan()
-        );
-    }
-
-    let legacy = legacy_extension_path();
-    if legacy.exists() {
-        println!(
-            "  {} Legacy extension file found at {}",
-            "⚠".yellow(),
-            legacy.display()
-        );
-        println!(
-            "  {} Remove it to prevent double-loading: rm {}",
-            "→".cyan(),
-            legacy.display()
         );
     }
 
@@ -546,10 +500,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_path_is_under_extensions() {
-        let path = legacy_extension_path();
-        assert!(path.to_string_lossy().contains("extensions"));
-        assert!(path.to_string_lossy().contains("omni.ts"));
+    fn settings_path_contains_dot_pi() {
+        let path = pi_settings_path();
+        assert!(path.to_string_lossy().contains(".pi"));
+        assert!(path.to_string_lossy().contains("settings.json"));
     }
 
     #[test]
