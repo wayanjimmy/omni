@@ -1,0 +1,20 @@
+{
+  "name": "@fajarhide/omni-pi",
+  "version": "0.1.0",
+  "description": "Pi extension for OMNI semantic output distillation.",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

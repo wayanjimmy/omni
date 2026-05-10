@@ -32,6 +32,7 @@ fn print_help() {
     );
     println!("  {: <14} Configure Hermes Agent", "--hermes".cyan());
     println!("  {: <14} Configure VS Code (MCP)", "--vscode".cyan());
+    println!("  {: <14} Configure Pi Agent", "--pi".cyan());
 
     println!("\n{}", "CLAUDE SPECIFIC FLAGS:".bold().bright_white());
     println!(
@@ -50,6 +51,16 @@ fn print_help() {
     );
 
     println!("  {: <14} Show this help message", "--help, -h".cyan());
+
+    println!("\n{}", "PI SPECIFIC FLAGS:".bold().bright_white());
+    println!(
+        "  {: <14} Install Pi package project-locally",
+        "--pi-local".cyan()
+    );
+    println!(
+        "  {: <14} Print Pi install command without running",
+        "--pi-manual".cyan()
+    );
 
     println!("\n{}", "EXAMPLES:".bold().bright_white());
     println!(
@@ -85,6 +96,9 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
     let mut is_antigravity = args.iter().any(|a| a == "--antigravity");
     let mut is_hermes = args.iter().any(|a| a == "--hermes");
     let mut is_vscode = args.iter().any(|a| a == "--vscode");
+    let mut is_pi = args.iter().any(|a| a == "--pi");
+    let is_pi_local = args.iter().any(|a| a == "--pi-local");
+    let is_pi_manual = args.iter().any(|a| a == "--pi-manual");
 
     let mut is_hook = args.iter().any(|a| a == "--hook");
     let mut is_mcp = args.iter().any(|a| a == "--mcp");
@@ -112,6 +126,9 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         && !is_antigravity
         && !is_hermes
         && !is_vscode
+        && !is_pi
+        && !is_pi_local
+        && !is_pi_manual
         && !is_status
         && !is_uninstall
         && !is_hook
@@ -136,10 +153,11 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         println!("  [{}] Antigravity IDE", "11".cyan());
         println!("  [{}] Hermes Agent", "12".cyan());
         println!("  [{}] VS Code (MCP)", "13".cyan());
+        println!("  [{}]  Pi Agent", "14".cyan());
         println!("  [{}]  Quit\n", "q".yellow());
 
         use std::io::Write;
-        print!("Select an option [1-13, q]: ");
+        print!("Select an option [1-14, q]: ");
         std::io::stdout().flush()?;
 
         let mut input = String::new();
@@ -162,6 +180,7 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
             "11" => is_antigravity = true,
             "12" => is_hermes = true,
             "13" => is_vscode = true,
+            "14" => is_pi = true,
             _ => return Ok(()),
         }
         println!();
@@ -182,6 +201,7 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
             "antigravity",
             "hermes",
             "vscode",
+            "pi",
         ]
     } else {
         let mut ids = Vec::new();
@@ -223,6 +243,9 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
         }
         if is_vscode {
             ids.push("vscode");
+        }
+        if is_pi {
+            ids.push("pi");
         }
         ids
     };
@@ -308,9 +331,17 @@ pub fn run_init(args: &[String]) -> anyhow::Result<()> {
     for agent in integrations {
         if target_ids.contains(&agent.id()) {
             println!("{}", format!("🤖 {} Setup", agent.name()).bold().cyan());
-            if let Err(e) = agent.install(&exe_path) {
+
+            // Pi uses a specialized install path that respects --pi-local and --pi-manual.
+            if agent.id() == "pi" {
+                let mode = crate::agents::pi::install_mode_from_flags(args);
+                if let Err(e) = crate::agents::pi::install_with_mode(&exe_path, &mode) {
+                    eprintln!("  {} Failed: {}", "✗".red(), e);
+                }
+            } else if let Err(e) = agent.install(&exe_path) {
                 eprintln!("  {} Failed: {}", "✗".red(), e);
             }
+
             if agent.id() == "claude" {
                 println!("\n  {} Binary: {}", "ℹ".blue(), exe_path.bright_black());
                 println!(
