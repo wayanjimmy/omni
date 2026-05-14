@@ -38,6 +38,31 @@ infisical run --silent --projectId=<project-id> -- pi -e git:https://github.com/
 - `edit` and `write` tool results are skipped because OMNI passes mutation tools through unchanged.
 - OMNI subprocess failures, timeouts, empty output, invalid JSON, and over-16MB payloads fail open so Pi can keep its original result.
 
+## Slash Command Toggle
+
+You can toggle OMNI distillation per session:
+
+```text
+/omni
+/omni status
+/omni on
+/omni off
+/omni refresh
+/omni help
+```
+
+- `on`: enable OMNI forwarding for this session.
+- `off`: disable OMNI forwarding for this session (raw tool output pass-through).
+- `refresh`: re-check OMNI availability.
+
+Environment defaults:
+
+```bash
+PI_OMNI_ENABLED=1
+PI_OMNI_SHOW_STATUS=1
+PI_OMNI_VERBOSE=0
+```
+
 ## Optional Configuration
 
 By default, the extension executes `omni` from `PATH`. If Pi provides extension configuration, set `omniPath` to use a custom binary path:

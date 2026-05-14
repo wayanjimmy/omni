@@ -1,0 +1,6 @@
+{
+  "packages": [
+    "git:github.com/nicobailon/pi-mcp-adapter",
+    "git:github.com/wayanjimmy/omni@pi-v0.6.0-alpha.3"
+  ]
+}
