@@ -13,9 +13,11 @@ const VERBOSE = readBooleanEnv("PI_OMNI_VERBOSE", false);
 
 type JsonObject = Record<string, unknown>;
 
+type CommandHandler = (args: string | undefined, ctx: CommandContext) => unknown;
+
 type ExtensionAPI = {
   on(eventName: string, handler: (...args: unknown[]) => unknown): void;
-  registerCommand?: (name: string, command: { description?: string; handler: (args: string | undefined, ctx: CommandContext) => unknown }) => void;
+  registerCommand?: ((name: string, handler: CommandHandler) => void) | ((name: string, command: { description?: string; handler: CommandHandler }) => void);
 };
 
 type CommandContext = {
@@ -310,36 +312,47 @@ function notifyStatus(ctx: CommandContext, sessionId: string): void {
 }
 
 function registerOmniCommand(pi: ExtensionAPI): void {
-  pi.registerCommand?.(COMMAND_KEY, {
-    description: "Manage OMNI distillation: /omni [status|on|off|refresh|help]",
-    handler: async (args, ctx) => {
-      const sid = ctx.sessionId || `pi-${process.pid}`;
-      const sub = (args ?? "status").trim().toLowerCase() || "status";
+  if (!pi.registerCommand) {
+    return;
+  }
 
-      switch (sub) {
-        case "on":
-          setEnabled(sid, true);
-          await probeOmni({ sessionId: sid }, false);
-          notifyStatus(ctx, sid);
-          return;
-        case "off":
-          setEnabled(sid, false);
-          notifyStatus(ctx, sid);
-          return;
-        case "refresh":
-          await probeOmni({ sessionId: sid }, true);
-          notifyStatus(ctx, sid);
-          return;
-        case "help":
-          ctx.ui.notify("/omni status|on|off|refresh\nEnv: PI_OMNI_ENABLED, PI_OMNI_SHOW_STATUS, PI_OMNI_VERBOSE", "info");
-          return;
-        case "status":
-        default:
-          await probeOmni({ sessionId: sid }, false);
-          notifyStatus(ctx, sid);
-      }
-    },
-  });
+  const handler: CommandHandler = async (args, ctx) => {
+    const sid = ctx.sessionId || `pi-${process.pid}`;
+    const sub = (args ?? "status").trim().toLowerCase() || "status";
+
+    switch (sub) {
+      case "on":
+        setEnabled(sid, true);
+        await probeOmni({ sessionId: sid }, false);
+        notifyStatus(ctx, sid);
+        return;
+      case "off":
+        setEnabled(sid, false);
+        notifyStatus(ctx, sid);
+        return;
+      case "refresh":
+        await probeOmni({ sessionId: sid }, true);
+        notifyStatus(ctx, sid);
+        return;
+      case "help":
+        ctx.ui.notify("/omni status|on|off|refresh\nEnv: PI_OMNI_ENABLED, PI_OMNI_SHOW_STATUS, PI_OMNI_VERBOSE", "info");
+        return;
+      case "status":
+      default:
+        await probeOmni({ sessionId: sid }, false);
+        notifyStatus(ctx, sid);
+    }
+  };
+
+  const register = pi.registerCommand as (name: string, value: unknown) => void;
+  try {
+    register(COMMAND_KEY, handler);
+  } catch {
+    register(COMMAND_KEY, {
+      description: "Manage OMNI distillation: /omni [status|on|off|refresh|help]",
+      handler,
+    });
+  }
 }
 
 function readBooleanEnv(name: string, fallback: boolean): boolean {
