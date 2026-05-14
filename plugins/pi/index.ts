@@ -17,7 +17,7 @@ type CommandHandler = (args: string | undefined, ctx: CommandContext) => unknown
 
 type ExtensionAPI = {
   on(eventName: string, handler: (...args: unknown[]) => unknown): void;
-  registerCommand?: ((name: string, handler: CommandHandler) => void) | ((name: string, command: { description?: string; handler: CommandHandler }) => void);
+  registerCommand?: (name: string, command: { description?: string; handler: CommandHandler }) => void;
 };
 
 type CommandContext = {
@@ -303,10 +303,10 @@ function statusLine(sessionId: string): string {
   return `OMNI:${enabled} (${availability})`;
 }
 
-function notifyStatus(ctx: CommandContext, sessionId: string): void {
+function notifyStatus(ctx: CommandContext, sessionId: string, forceNotify = false): void {
   const message = statusLine(sessionId);
   ctx.ui.setStatus?.("omni", message);
-  if (SHOW_STATUS) {
+  if (forceNotify || SHOW_STATUS) {
     ctx.ui.notify(message, "info");
   }
 }
@@ -318,21 +318,23 @@ function registerOmniCommand(pi: ExtensionAPI): void {
 
   const handler: CommandHandler = async (args, ctx) => {
     const sid = ctx.sessionId || `pi-${process.pid}`;
-    const sub = (args ?? "status").trim().toLowerCase() || "status";
+    const rawArgs = typeof args === "string" ? args : "";
+    const [subRaw] = rawArgs.trim().split(/\s+/).filter(Boolean);
+    const sub = (subRaw ?? "status").toLowerCase();
 
     switch (sub) {
       case "on":
         setEnabled(sid, true);
         await probeOmni({ sessionId: sid }, false);
-        notifyStatus(ctx, sid);
+        notifyStatus(ctx, sid, true);
         return;
       case "off":
         setEnabled(sid, false);
-        notifyStatus(ctx, sid);
+        notifyStatus(ctx, sid, true);
         return;
       case "refresh":
         await probeOmni({ sessionId: sid }, true);
-        notifyStatus(ctx, sid);
+        notifyStatus(ctx, sid, true);
         return;
       case "help":
         ctx.ui.notify("/omni status|on|off|refresh\nEnv: PI_OMNI_ENABLED, PI_OMNI_SHOW_STATUS, PI_OMNI_VERBOSE", "info");
@@ -340,19 +342,14 @@ function registerOmniCommand(pi: ExtensionAPI): void {
       case "status":
       default:
         await probeOmni({ sessionId: sid }, false);
-        notifyStatus(ctx, sid);
+        notifyStatus(ctx, sid, true);
     }
   };
 
-  const register = pi.registerCommand as (name: string, value: unknown) => void;
-  try {
-    register(COMMAND_KEY, handler);
-  } catch {
-    register(COMMAND_KEY, {
-      description: "Manage OMNI distillation: /omni [status|on|off|refresh|help]",
-      handler,
-    });
-  }
+  pi.registerCommand(COMMAND_KEY, {
+    description: "Manage OMNI distillation: /omni [status|on|off|refresh|help]",
+    handler,
+  });
 }
 
 function readBooleanEnv(name: string, fallback: boolean): boolean {
