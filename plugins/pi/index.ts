@@ -1,44 +1,19 @@
 import { execFile } from "node:child_process";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionStartEvent,
+  BeforeAgentStartEvent,
+  SessionBeforeCompactEvent,
+  ToolResultEvent,
+} from "@earendil-works/pi-coding-agent";
 
 const OMNI_AGENT_ID = "pi";
 const DEFAULT_OMNI_PATH = "omni";
 const OMNI_TIMEOUT_MS = 10_000;
 const OMNI_STDIN_LIMIT_BYTES = 16 * 1024 * 1024;
 const MUTATION_TOOLS = new Set(["edit", "write"]);
-
 type JsonObject = Record<string, unknown>;
-
-type ExtensionAPI = {
-  on(eventName: string, handler: (...args: unknown[]) => unknown): void;
-};
-
-type ExtensionContext = {
-  sessionId?: string;
-  cwd?: string;
-  workingDirectory?: string;
-  config?: { omniPath?: string };
-  extensionConfig?: { omniPath?: string };
-};
-
-type SessionBeforeCompactEvent = {
-  sessionId?: string;
-  compactionReason?: string;
-  reason?: string;
-};
-
-type BeforeAgentStartEvent = {
-  systemPrompt: string;
-};
-
-type ToolResultEvent = {
-  toolName: string;
-  input?: unknown;
-  output?: unknown;
-  result?: unknown;
-  response?: unknown;
-  content?: unknown;
-  isError?: boolean;
-};
 
 type OmniHookOutput = {
   hookSpecificOutput?: {
@@ -50,106 +25,156 @@ type OmniHookOutput = {
 
 let pendingSystemPromptAddition: string | undefined;
 
+/**
+ * Find the ExtensionContext from the args array passed to event handlers.
+ * Real ExtensionContext always has `cwd: string` and `ui`, so we use those
+ * to identify it among the positional args.
+ */
 function contextFromArgs(args: unknown[]): ExtensionContext | undefined {
-  const objects = args.filter((arg): arg is ExtensionContext => {
-    return typeof arg === "object" && arg !== null && !Array.isArray(arg);
+  return args.find((arg): arg is ExtensionContext => {
+    return (
+      typeof arg === "object" &&
+      arg !== null &&
+      !Array.isArray(arg) &&
+      "cwd" in arg &&
+      "ui" in arg
+    );
   });
-
-  return (
-    objects.find((arg) => {
-      return Boolean(
-        arg.config ||
-          arg.extensionConfig ||
-          arg.cwd ||
-          arg.workingDirectory ||
-          arg.sessionId,
-      );
-    }) || objects.at(-1)
-  );
 }
 
 function omniPathFromContext(ctx?: ExtensionContext): string {
-  return ctx?.config?.omniPath || ctx?.extensionConfig?.omniPath || DEFAULT_OMNI_PATH;
+  // Look for omni path in extension config (stored as a custom property on context)
+  const ctxObj = ctx as unknown as Record<string, unknown>;
+  if (ctxObj._omniPath && typeof ctxObj._omniPath === "string") {
+    return ctxObj._omniPath;
+  }
+  // Check extension-specific config if available
+  const config = ctxObj.config as JsonObject | undefined;
+  if (config?.omniPath && typeof config.omniPath === "string") {
+    return config.omniPath;
+  }
+  const extCfg = ctxObj.extensionConfig as JsonObject | undefined;
+  if (extCfg?.omniPath && typeof extCfg.omniPath === "string") {
+    return extCfg.omniPath;
+  }
+  return DEFAULT_OMNI_PATH;
 }
 
-function workingDirectoryFromContext(ctx?: ExtensionContext): string {
-  return ctx?.workingDirectory || ctx?.cwd || process.cwd();
+function workingDirectoryFromContext(ctx: ExtensionContext): string {
+  return ctx.cwd;
 }
 
-function sessionIdFromContext(ctx?: ExtensionContext): string {
-  return ctx?.sessionId || `pi-${process.pid}`;
+function sessionIdFromManager(ctx: ExtensionContext): string {
+  try {
+const id = ctx.sessionManager.getSessionId();
+    return id || "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 function bytesFor(value: string): number {
   return Buffer.byteLength(value, "utf8");
 }
 
-async function runOmni(
-  args: string[],
-  payload: JsonObject,
+function runOmni(
+  extraArgs: string[],
+  stdin: JsonObject,
   ctx?: ExtensionContext,
 ): Promise<OmniHookOutput | undefined> {
-  const stdin = JSON.stringify(payload);
-  if (bytesFor(stdin) > OMNI_STDIN_LIMIT_BYTES) {
-    return undefined;
-  }
-
   return new Promise((resolve) => {
+    const omniPath = omniPathFromContext(ctx);
+    const stdinJson = JSON.stringify(stdin);
+
+    if (bytesFor(stdinJson) > OMNI_STDIN_LIMIT_BYTES) {
+      resolve(undefined);
+      return;
+    }
+
+    const args = ["--stdin", "--agent-id", OMNI_AGENT_ID, ...extraArgs];
+    const cwd = ctx ? workingDirectoryFromContext(ctx) : process.cwd();
+
     const child = execFile(
-      omniPathFromContext(ctx),
+      omniPath,
       args,
       {
-        env: { ...process.env, OMNI_AGENT_ID },
+        cwd,
         timeout: OMNI_TIMEOUT_MS,
         maxBuffer: OMNI_STDIN_LIMIT_BYTES,
+        env: { ...process.env },
       },
-      (error, stdout) => {
-        if (error || !stdout.trim()) {
+      (error, stdout, stderr) => {
+        if (error) {
           resolve(undefined);
           return;
         }
 
         try {
-          resolve(JSON.parse(stdout) as OmniHookOutput);
+          const parsed = JSON.parse(stdout) as OmniHookOutput;
+          resolve(parsed);
         } catch {
           resolve(undefined);
         }
       },
     );
 
-    child.stdin?.end(stdin);
+    if (child.stdin) {
+      child.stdin.write(stdinJson);
+      child.stdin.end();
+    }
   });
 }
 
-async function runSessionStart(ctx?: ExtensionContext): Promise<void> {
-  const result = await runOmni(
+async function runOmniForSessionStart(
+  event: SessionStartEvent,
+  ctx: ExtensionContext,
+): Promise<void> {
+  await runOmni(
     ["--session-start"],
     {
       hookEventName: "SessionStart",
-      sessionId: sessionIdFromContext(ctx),
-      workingDirectory: workingDirectoryFromContext(ctx),
+      sessionId: sessionIdFromManager(ctx),
+      reason: event.reason,
+    },
+    ctx,
+  );
+}
+
+async function runOmniForBeforeAgentStart(
+  event: BeforeAgentStartEvent,
+  ctx: ExtensionContext,
+): Promise<void> {
+  const result = await runOmni(
+    ["--before-agent-start"],
+    {
+      hookEventName: "BeforeAgentStart",
+      sessionId: sessionIdFromManager(ctx),
+      systemPromptLength: event.systemPrompt.length,
+      mutationTools: Array.from(MUTATION_TOOLS),
     },
     ctx,
   );
 
-  pendingSystemPromptAddition = result?.hookSpecificOutput?.systemPromptAddition || undefined;
+  pendingSystemPromptAddition =
+    result?.hookSpecificOutput?.systemPromptAddition || undefined;
 }
 
-async function runPreCompact(
+async function runOmniForPreCompact(
   event: SessionBeforeCompactEvent,
-  ctx?: ExtensionContext,
+  ctx: ExtensionContext,
 ): Promise<void> {
   const result = await runOmni(
     ["--pre-compact"],
     {
       hookEventName: "PreCompact",
-      sessionId: event.sessionId || sessionIdFromContext(ctx),
-      compactionReason: event.compactionReason || event.reason || "context_limit_reached",
+      sessionId: sessionIdFromManager(ctx),
+      compactionReason: event.customInstructions || "context_limit_reached",
     },
     ctx,
   );
 
-  pendingSystemPromptAddition = result?.hookSpecificOutput?.systemPromptAddition || undefined;
+  pendingSystemPromptAddition =
+    result?.hookSpecificOutput?.systemPromptAddition || undefined;
 }
 
 function toolNameForOmni(toolName: string | undefined): string {
@@ -209,68 +234,137 @@ function textFromUnknown(value: unknown): string {
 }
 
 function toolResponseForOmni(event: ToolResultEvent): JsonObject {
-  const rawOutput = event.response ?? event.result ?? event.output ?? event.content;
-  const content = textFromUnknown(rawOutput);
+  const text = event.content
+    .map((c) => {
+      if (typeof c === "string") return c;
+      if (c && typeof c === "object" && "type" in c && c.type === "text") {
+        return (c as { text: string }).text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 
-  if (toolNameForOmni(event.toolName) === "Bash") {
-    return event.isError ? { stderr: content } : { stdout: content };
-  }
-
-  return { content };
-}
-
-async function runPostTool(event: ToolResultEvent, ctx?: ExtensionContext): Promise<unknown> {
-  if (!event?.toolName || MUTATION_TOOLS.has(event.toolName.toLowerCase())) {
-    return undefined;
-  }
-
-  const result = await runOmni(
-    ["--post-hook"],
-    {
-      tool_name: toolNameForOmni(event.toolName),
-      tool_input: event.input ?? {},
-      tool_response: toolResponseForOmni(event),
-    },
-    ctx,
-  );
-
-  const output = result?.hookSpecificOutput;
-  const updatedResponse = output?.updatedResponse?.trim();
-  if (!updatedResponse) {
-    return undefined;
-  }
-
-  const text = [updatedResponse, output?.additionalContext].filter(Boolean).join("\n\n");
-  return { content: [{ type: "text" as const, text }] };
+  return {
+    toolName: toolNameForOmni(event.toolName),
+    result: text,
+    isError: event.isError,
+  };
 }
 
 export default function omniExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (...args: unknown[]) => {
-    await runSessionStart(contextFromArgs(args));
+    const ctx = contextFromArgs(args);
+    if (!ctx) {
+      return;
+    }
+
+    const event = args.find(
+      (arg): arg is SessionStartEvent =>
+        typeof arg === "object" &&
+        arg !== null &&
+        "type" in arg &&
+        arg.type === "session_start",
+    );
+
+    if (!event) {
+      return;
+    }
+
+    try {
+      await runOmniForSessionStart(event, ctx);
+    } catch {
+      // OMNI fails silently — never crash the host
+    }
   });
 
-  pi.on("before_agent_start", async (rawEvent: unknown) => {
-    if (!pendingSystemPromptAddition) {
-      return undefined;
+  pi.on("before_agent_start", async (...args: unknown[]) => {
+    const ctx = contextFromArgs(args);
+    if (!ctx) {
+      return;
     }
 
-    const event = rawEvent as BeforeAgentStartEvent;
-    if (typeof event.systemPrompt !== "string") {
-      return undefined;
+    const event = args.find(
+      (arg): arg is BeforeAgentStartEvent =>
+        typeof arg === "object" &&
+        arg !== null &&
+        "type" in arg &&
+        arg.type === "before_agent_start",
+    );
+
+    if (!event) {
+      return;
     }
 
-    const systemPrompt = `${event.systemPrompt}\n\n${pendingSystemPromptAddition}`;
-    pendingSystemPromptAddition = undefined;
-    return { systemPrompt };
+    try {
+      await runOmniForBeforeAgentStart(event, ctx);
+    } catch {
+      // OMNI fails silently — never crash the host
+    }
   });
 
   pi.on("session_before_compact", async (...args: unknown[]) => {
-    const event = (args[0] ?? {}) as SessionBeforeCompactEvent;
-    await runPreCompact(event, contextFromArgs(args.slice(1)));
+    const ctx = contextFromArgs(args);
+    if (!ctx) {
+      return;
+    }
+
+    const event = args.find(
+      (arg): arg is SessionBeforeCompactEvent =>
+        typeof arg === "object" &&
+        arg !== null &&
+        "type" in arg &&
+        arg.type === "session_before_compact",
+    );
+
+    if (!event) {
+      return;
+    }
+
+    try {
+      await runOmniForPreCompact(event, ctx);
+    } catch {
+      // OMNI fails silently — never crash the host
+    }
   });
 
   pi.on("tool_result", async (...args: unknown[]) => {
-    const event = args[0] as ToolResultEvent;
-    return runPostTool(event, contextFromArgs(args.slice(1)));
+    const ctx = contextFromArgs(args);
+    if (!ctx) {
+      return;
+    }
+
+    const event = args.find(
+      (arg): arg is ToolResultEvent =>
+        typeof arg === "object" &&
+        arg !== null &&
+        "type" in arg &&
+        arg.type === "tool_result",
+    );
+
+    if (!event) {
+      return;
+    }
+
+    const toolName = event.toolName;
+    if (!MUTATION_TOOLS.has(toolName)) {
+      return;
+    }
+
+    try {
+      await runOmni(
+        ["--tool-result"],
+        {
+          hookEventName: "ToolResult",
+          sessionId: sessionIdFromManager(ctx),
+          toolName: toolNameForOmni(toolName),
+          toolResponse: toolResponseForOmni(event),
+          isError: event.isError,
+        },
+        ctx,
+      );
+    } catch {
+      // OMNI fails silently — never crash the host
+    }
   });
 }

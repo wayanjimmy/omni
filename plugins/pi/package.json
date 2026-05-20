@@ -11,9 +11,12 @@
     "README.md"
   ],
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.3",
     "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
   }
