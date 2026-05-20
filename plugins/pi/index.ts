@@ -15,6 +15,7 @@ const OMNI_STDIN_LIMIT_BYTES = 16 * 1024 * 1024;
 const MUTATION_TOOLS = new Set(["edit", "write"]);
 type JsonObject = Record<string, unknown>;
 
+/** Output shape from OMNI hook subprocesses */
 type OmniHookOutput = {
   hookSpecificOutput?: {
     systemPromptAddition?: string;
@@ -23,16 +24,15 @@ type OmniHookOutput = {
   };
 };
 
+let omniEnabled = true;
 let pendingSystemPromptAddition: string | undefined;
 
 function omniPathFromContext(ctx: ExtensionContext | undefined): string {
-  // Look for omni path in extension config (stored as a custom property on context)
   const ctxObj = ctx as unknown as Record<string, unknown> | undefined;
   if (!ctxObj) return DEFAULT_OMNI_PATH;
   if (ctxObj._omniPath && typeof ctxObj._omniPath === "string") {
     return ctxObj._omniPath;
   }
-  // Check extension-specific config if available
   const config = ctxObj.config as JsonObject | undefined;
   if (config?.omniPath && typeof config.omniPath === "string") {
     return config.omniPath;
@@ -145,7 +145,7 @@ async function runOmniForPreCompact(
   const result = await runOmni(
     ["--pre-compact"],
     {
-      hookEventName: "PreCompact",
+      hookEventName: "Pre Compact",
       sessionId: sessionIdFromManager(ctx),
       compactionReason: event.customInstructions || "context_limit_reached",
     },
@@ -228,7 +228,39 @@ function toolResponseForOmni(event: ToolResultEvent): JsonObject {
 }
 
 export default function omniExtension(pi: ExtensionAPI): void {
+  // ── Slash commands ──
+
+  pi.registerCommand("omni", {
+    description: "Enable, disable, or check OMNI status",
+    async handler(args, ctx) {
+      const arg = args.trim().toLowerCase();
+
+      if (arg === "off" || arg === "disable") {
+        omniEnabled = false;
+        pendingSystemPromptAddition = undefined;
+        ctx.ui.notify("OMNI disabled — hooks bypassed until re-enabled", "info");
+        return;
+      }
+
+      if (arg === "on" || arg === "enable") {
+        omniEnabled = true;
+        ctx.ui.notify("OMNI enabled — hooks will distill output normally", "info");
+        return;
+      }
+
+      const status = omniEnabled ? "enabled" : "disabled";
+      omniPathFromContext(ctx); // force context usage
+      ctx.ui.notify(
+        `OMNI is ${status}\nTools tracked: ${Array.from(MUTATION_TOOLS).join(", ")}`,
+        "info",
+      );
+    },
+  });
+
+  // ── Event handlers ──
+
   pi.on("session_start", async (event, ctx) => {
+    if (!omniEnabled) return;
     try {
       await runOmniForSessionStart(event, ctx);
     } catch {
@@ -237,6 +269,7 @@ export default function omniExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    if (!omniEnabled) return;
     try {
       await runOmniForBeforeAgentStart(event, ctx);
     } catch {
@@ -245,6 +278,7 @@ export default function omniExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_before_compact", async (event, ctx) => {
+    if (!omniEnabled) return;
     try {
       await runOmniForPreCompact(event, ctx);
     } catch {
@@ -253,6 +287,7 @@ export default function omniExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    if (!omniEnabled) return;
     const toolName = event.toolName;
     if (!MUTATION_TOOLS.has(toolName)) {
       return;
@@ -271,7 +306,7 @@ export default function omniExtension(pi: ExtensionAPI): void {
         ctx,
       );
     } catch {
-      // OMNI fails silently — never crash the host
+      // OMNI fails silent — never crash the host
     }
   });
 }
