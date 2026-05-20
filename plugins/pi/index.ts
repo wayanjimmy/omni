@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import type {
   ExtensionAPI,
-  ExtensionContext,
   SessionStartEvent,
   BeforeAgentStartEvent,
   SessionBeforeCompactEvent,
@@ -13,12 +12,11 @@ const DEFAULT_OMNI_PATH = "omni";
 const OMNI_TIMEOUT_MS = 10_000;
 const OMNI_STDIN_LIMIT_BYTES = 16 * 1024 * 1024;
 
-/** Patterns that identify file-mutating tools (both built-in and custom names). */
-const MUTATION_TOOL_PATTERNS = ["edit", "write", "apply", "patch", "modify"] as const;
+/** Tools whose results are NOT sent to OMNI (mutation ops handled separately). */
+const EXCLUDE_TOOL_NAMES = new Set(["edit", "write"]);
 
 type JsonObject = Record<string, unknown>;
 
-/** Output shape from OMNI hook subprocesses */
 type OmniHookOutput = {
   hookSpecificOutput?: {
     systemPromptAddition?: string;
@@ -27,79 +25,70 @@ type OmniHookOutput = {
   };
 };
 
+/** State shared across hooks — toggled by /omni command */
 let omniEnabled = true;
 let pendingSystemPromptAddition: string | undefined;
 
-/** Detect whether a tool mutates files — covers both built-in and custom tool names. */
-function isMutationTool(toolName: string): boolean {
-  const lower = toolName.toLowerCase().trim();
-  return MUTATION_TOOL_PATTERNS.some((pat) => lower.includes(pat));
-}
-
-function omniPathFromContext(ctx: ExtensionContext | undefined): string {
-  const ctxObj = ctx as unknown as Record<string, unknown> | undefined;
-  if (!ctxObj) return DEFAULT_OMNI_PATH;
-  if (ctxObj._omniPath && typeof ctxObj._omniPath === "string") {
-    return ctxObj._omniPath;
-  }
-  const config = ctxObj.config as JsonObject | undefined;
-  if (config?.omniPath && typeof config.omniPath === "string") {
-    return config.omniPath;
-  }
-  const extCfg = ctxObj.extensionConfig as JsonObject | undefined;
-  if (extCfg?.omniPath && typeof extCfg.omniPath === "string") {
-    return extCfg.omniPath;
+function omniPathOrDefault(config?: unknown): string {
+  if (typeof config === "object" && config !== null) {
+    const obj = config as Record<string, unknown>;
+    if (typeof obj._omniPath === "string") return obj._omniPath;
+    const cfg = obj.config as JsonObject | undefined;
+    if (cfg?.omniPath && typeof cfg.omniPath === "string") return cfg.omniPath as string;
+    const ext = obj.extensionConfig as JsonObject | undefined;
+    if (ext?.omniPath && typeof ext.omniPath === "string") return ext.omniPath as string;
   }
   return DEFAULT_OMNI_PATH;
 }
 
-function sessionIdFromManager(ctx: ExtensionContext): string {
+function sessionId(ctx: unknown): string {
   try {
-    const id = ctx.sessionManager.getSessionId();
-    return id || "unknown";
+    const obj = ctx as Record<string, unknown> | undefined;
+    return (obj?.sessionManager as { getSessionId?: () => string | undefined })
+      ?.getSessionId?.() || "unknown";
   } catch {
     return "unknown";
   }
 }
 
-function bytesFor(value: string): number {
-  return Buffer.byteLength(value, "utf8");
-}
-
+/**
+ * Call the `omni` binary.
+ * JSON goes in via stdin; OMNI_AGENT_ID is injected as an env var.
+ * The extension flags used by the Pi runtime have NO relation to OMNI CLI flags —
+ * `--stdin` and `--agent-id` do NOT exist on the OMNI binary and would cause
+ * "unknown command" failures that get silently swallowed.
+ */
 function runOmni(
-  extraArgs: string[],
-  stdin: JsonObject,
-  ctx: ExtensionContext,
+  omniFlag: string,
+  payload: JsonObject,
+  cwd: string,
+  ctxForConfig?: unknown,
 ): Promise<OmniHookOutput | undefined> {
   return new Promise((resolve) => {
-    const omniPath = omniPathFromContext(ctx);
-    const stdinJson = JSON.stringify(stdin);
+    const omni = omniPathOrDefault(ctxForConfig);
+    const body = JSON.stringify(payload);
 
-    if (bytesFor(stdinJson) > OMNI_STDIN_LIMIT_BYTES) {
+    if (Buffer.byteLength(body, "utf8") > OMNI_STDIN_LIMIT_BYTES) {
       resolve(undefined);
       return;
     }
 
-    const args = ["--stdin", "--agent-id", OMNI_AGENT_ID, ...extraArgs];
-
     const child = execFile(
-      omniPath,
-      args,
+      omni,
+      [omniFlag],
       {
-        cwd: ctx.cwd,
+        cwd,
         timeout: OMNI_TIMEOUT_MS,
         maxBuffer: OMNI_STDIN_LIMIT_BYTES,
-        env: { ...process.env },
+        env: { ...process.env, OMNI_AGENT_ID },
       },
       (error, stdout) => {
         if (error) {
           resolve(undefined);
           return;
         }
-
         try {
-          const parsed = JSON.parse(stdout) as OmniHookOutput;
-          resolve(parsed);
+          resolve(JSON.parse(stdout) as OmniHookOutput);
         } catch {
           resolve(undefined);
         }
@@ -107,69 +96,16 @@ function runOmni(
     );
 
     if (child.stdin) {
-      child.stdin.write(stdinJson);
-      child.stdin.end();
+      child.stdin.end(body);
     }
   });
 }
 
-async function runOmniForSessionStart(
-  event: SessionStartEvent,
-  ctx: ExtensionContext,
-): Promise<void> {
-  await runOmni(
-    ["--session-start"],
-    {
-      hookEventName: "SessionStart",
-      sessionId: sessionIdFromManager(ctx),
-      reason: event.reason,
-    },
-    ctx,
-  );
-}
+// ── Helpers for OMNI payloads ──
 
-async function runOmniForBeforeAgentStart(
-  event: BeforeAgentStartEvent,
-  ctx: ExtensionContext,
-): Promise<void> {
-  const result = await runOmni(
-    ["--before-agent-start"],
-    {
-      hookEventName: "BeforeAgentStart",
-      sessionId: sessionIdFromManager(ctx),
-      systemPromptLength: event.systemPrompt.length,
-      mutationTools: Array.from(MUTATION_TOOL_PATTERNS),
-    },
-    ctx,
-  );
-
-  pendingSystemPromptAddition =
-    result?.hookSpecificOutput?.systemPromptAddition || undefined;
-}
-
-async function runOmniForPreCompact(
-  event: SessionBeforeCompactEvent,
-  ctx: ExtensionContext,
-): Promise<void> {
-  const result = await runOmni(
-    ["--pre-compact"],
-    {
-      hookEventName: "PreCompact",
-      sessionId: sessionIdFromManager(ctx),
-      compactionReason: event.customInstructions || "context_limit_reached",
-    },
-    ctx,
-  );
-
-  pendingSystemPromptAddition =
-    result?.hookSpecificOutput?.systemPromptAddition || undefined;
-}
-
-function toolNameForOmni(toolName: string): string {
-  const normalized = toolName.trim();
-  const lower = normalized.toLowerCase();
-
-  switch (lower) {
+function toolNameForOmni(name: string): string {
+  const n = name.toLowerCase().trim();
+  switch (n) {
     case "bash":
     case "shell":
     case "exec":
@@ -186,140 +122,157 @@ function toolNameForOmni(toolName: string): string {
     case "web_fetch":
     case "fetch":
       return "WebFetch";
-    case "edit":
-      return "Edit";
-    case "write":
-      return "Write";
     default:
-      return normalized;
+      return name.trim() || name;
   }
 }
 
-function textFromUnknown(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(textFromUnknown).filter(Boolean).join("\n");
-  }
+function extractText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractText).filter(Boolean).join("\n");
   if (typeof value === "object" && value !== null) {
-    const obj = value as JsonObject;
-    if (typeof obj.text === "string") {
-      return obj.text;
-    }
-    if (typeof obj.content === "string") {
-      return obj.content;
-    }
-    if (typeof obj.output === "string") {
-      return obj.output;
-    }
+    const o = value as JsonObject;
+    return (
+      (typeof o.text === "string" && o.text) ||
+      (typeof o.content === "string" && o.content) ||
+      (typeof o.output === "string" && o.output) ||
+      ""
+    );
   }
   return "";
 }
 
-function toolResponseForOmni(event: ToolResultEvent): JsonObject {
-  const text = event.content
-    .map((c) => {
+function toolResultPayload(event: ToolResultEvent): JsonObject {
+  const text = (event as { content?: unknown[] }).content
+    ?.map((c) => {
       if (typeof c === "string") return c;
-      if (c && typeof c === "object" && "type" in c && c.type === "text") {
-        return (c as { text: string }).text;
+      if (typeof c === "object" && c !== null && "type" in c && (c as { type: string }).type === "text") {
+return (c as unknown as { text: string }).text;
       }
       return "";
     })
     .filter(Boolean)
-    .join("\n");
+    .join("\n") ?? extractText((event as { output?: unknown }).output);
 
   return {
-    toolName: toolNameForOmni(event.toolName),
+    toolName: toolNameForOmni((event as { toolName: string }).toolName),
     result: text,
-    isError: event.isError,
+    isError: !!(event as { isError?: boolean }).isError,
   };
 }
 
+// ── Extension entry point ──
+
 export default function omniExtension(pi: ExtensionAPI): void {
-  // ── Slash commands ──
+  // ── Slash command ──
 
   pi.registerCommand("omni", {
     description: "Enable, disable, or check OMNI status",
-    async handler(args, ctx) {
-      const arg = args.trim().toLowerCase();
-
+    async handler(argStr, ctx) {
+      const arg = argStr.trim().toLowerCase();
       if (arg === "off" || arg === "disable") {
         omniEnabled = false;
         pendingSystemPromptAddition = undefined;
-        ctx.ui.notify("OMNI disabled — hooks bypassed until re-enabled", "info");
+        ctx.ui.notify("OMNI disabled", "info");
         return;
       }
-
       if (arg === "on" || arg === "enable") {
         omniEnabled = true;
-        ctx.ui.notify("OMNI enabled — hooks will distill output normally", "info");
+        ctx.ui.notify("OMNI enabled", "info");
         return;
       }
-
-      const status = omniEnabled ? "enabled" : "disabled";
-      const skipList = Array.from(MUTATION_TOOL_PATTERNS).join(", ");
       ctx.ui.notify(
-        `OMNI is ${status}\nMutation tools skipped: ${skipList}`,
+        omniEnabled ? "OMNI is enabled" : "OMNI is disabled",
         "info",
       );
     },
   });
 
-  // ── Event handlers ──
+  // ── Hook: session_start ──
 
   pi.on("session_start", async (event, ctx) => {
     if (!omniEnabled) return;
-    try {
-      await runOmniForSessionStart(event, ctx);
-    } catch {
-      // OMNI fails silently — never crash the host
-    }
+    runOmni(
+      "--session-start",
+      {
+        hookEventName: "SessionStart",
+        sessionId: sessionId(ctx),
+        reason: event.reason,
+      },
+      ctx.cwd,
+      ctx,
+    ).catch(() => {
+      /* fail-open */
+    });
   });
+
+  // ── Hook: before_agent_start ──
 
   pi.on("before_agent_start", async (event, ctx) => {
     if (!omniEnabled) return;
     try {
-      await runOmniForBeforeAgentStart(event, ctx);
+      const out = await runOmni(
+        "--before-agent-start",
+        {
+          hookEventName: "BeforeAgentStart",
+          sessionId: sessionId(ctx),
+          systemPromptLength: event.systemPrompt.length,
+          mutationTools: Array.from(EXCLUDE_TOOL_NAMES),
+        },
+        ctx.cwd,
+        ctx,
+      );
+      pendingSystemPromptAddition =
+        out?.hookSpecificOutput?.systemPromptAddition ?? undefined;
     } catch {
-      // OMNI fails silently — never crash the host
+      /* fail-open */
     }
   });
+
+  // ── Hook: session_before_compact ──
 
   pi.on("session_before_compact", async (event, ctx) => {
     if (!omniEnabled) return;
     try {
-      await runOmniForPreCompact(event, ctx);
+      const out = await runOmni(
+        "--pre-compact",
+        {
+          hookEventName: "PreCompact",
+          sessionId: sessionId(ctx),
+          compactionReason:
+            (event as { customInstructions?: string }).customInstructions ||
+            "context_limit_reached",
+        },
+        ctx.cwd,
+        ctx,
+      );
+      pendingSystemPromptAddition =
+        out?.hookSpecificOutput?.systemPromptAddition ?? undefined;
     } catch {
-      // OMNI fails silently — never crash the host
+      /* fail-open */
     }
   });
 
+  // ── Hook: tool_result (non-mutating only) ──
+
   pi.on("tool_result", async (event, ctx) => {
     if (!omniEnabled) return;
+    const name = (event as { toolName: string }).toolName;
+    if (EXCLUDE_TOOL_NAMES.has(name)) return;
 
-    const toolName = event.toolName;
-
-    // Skip file-mutating tools — OMNI only distills non-mutating tool results.
-    // Per PDD canvas: "tool_result calls omni --post-hook for non-mutating tools"
-    if (isMutationTool(toolName)) {
-      return;
-    }
-
-    try {
-      await runOmni(
-        ["--tool-result"],
-        {
-          hookEventName: "ToolResult",
-          sessionId: sessionIdFromManager(ctx),
-          toolName: toolNameForOmni(toolName),
-          toolResponse: toolResponseForOmni(event),
-          isError: event.isError,
-        },
-        ctx,
-      );
-    } catch {
-      // OMNI fails silently — never crash the host
-    }
+    runOmni(
+      "--post-hook",
+      {
+        hookEventName: "ToolResult",
+        sessionId: sessionId(ctx),
+        toolName: toolNameForOmni(name),
+        toolResponse: toolResultPayload(event),
+        isError: !!(event as { isError?: boolean }).isError,
+      },
+      ctx.cwd,
+      ctx,
+    ).catch(() => {
+      /* fail-open */
+    });
   });
 }

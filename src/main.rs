@@ -39,7 +39,9 @@ fn detect_mode(args: &[String]) -> Mode {
             "--mcp" => return Mode::Mcp,
             "--session-start" => return Mode::SessionStart,
             "--pre-compact" => return Mode::PreCompact,
-            "--pre-hook" => return Mode::PreHook,
+"--pre-hook" => return Mode::PreHook,
+            "--before-agent-start" => return Mode::PostHook,
+            _ => {}
             _ => {}
         }
     }
