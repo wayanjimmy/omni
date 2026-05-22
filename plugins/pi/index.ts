@@ -27,7 +27,6 @@ type OmniHookOutput = {
 
 /** State shared across hooks — toggled by /omni command */
 let omniEnabled = true;
-let pendingSystemPromptAddition: string | undefined;
 
 function omniPathOrDefault(config?: unknown): string {
   if (typeof config === "object" && config !== null) {
@@ -172,7 +171,6 @@ export default function omniExtension(pi: ExtensionAPI): void {
       const arg = argStr.trim().toLowerCase();
       if (arg === "off" || arg === "disable") {
         omniEnabled = false;
-        pendingSystemPromptAddition = undefined;
         ctx.ui.notify("OMNI disabled", "info");
         return;
       }
@@ -208,9 +206,13 @@ export default function omniExtension(pi: ExtensionAPI): void {
   });
 
   // ── Hook: before_agent_start ──
+  //
+  // Return `{ systemPrompt }` to chain OMNI's session-continuation summary
+  // onto the existing system prompt. Returning `undefined` is fail-open
+  // (Pi keeps the original prompt unchanged).
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (!omniEnabled) return;
+    if (!omniEnabled) return undefined;
     try {
       const out = await runOmni(
         "--before-agent-start",
@@ -224,57 +226,74 @@ export default function omniExtension(pi: ExtensionAPI): void {
         ctx.cwd,
         ctx,
       );
-      pendingSystemPromptAddition =
-        out?.hookSpecificOutput?.systemPromptAddition ?? undefined;
+      const addition = out?.hookSpecificOutput?.systemPromptAddition;
+      if (typeof addition === "string" && addition.trim().length > 0) {
+        return { systemPrompt: `${event.systemPrompt}\n\n${addition.trim()}` };
+      }
+      return undefined;
     } catch {
       /* fail-open */
+      return undefined;
     }
   });
 
   // ── Hook: session_before_compact ──
+  //
+  // Pi doesn't currently expose a way to inject text into the compaction
+  // prompt from this hook, so we just notify OMNI for telemetry/session
+  // tracking and discard the response.
 
   pi.on("session_before_compact", async (event, ctx) => {
     if (!omniEnabled) return;
-    try {
-      const out = await runOmni(
-        "--pre-compact",
-        {
-          hookEventName: "PreCompact",
-          sessionId: sessionId(ctx),
-          compactionReason:
-            (event as { customInstructions?: string }).customInstructions ||
-            "context_limit_reached",
-        },
-        ctx.cwd,
-        ctx,
-      );
-      pendingSystemPromptAddition =
-        out?.hookSpecificOutput?.systemPromptAddition ?? undefined;
-    } catch {
-      /* fail-open */
-    }
-  });
-
-  // ── Hook: tool_result (non-mutating only) ──
-
-  pi.on("tool_result", async (event, ctx) => {
-    if (!omniEnabled) return;
-    const name = (event as { toolName: string }).toolName;
-    if (EXCLUDE_TOOL_NAMES.has(name)) return;
-
     runOmni(
-      "--post-hook",
+      "--pre-compact",
       {
-        hookEventName: "ToolResult",
+        hookEventName: "PreCompact",
         sessionId: sessionId(ctx),
-        toolName: toolNameForOmni(name),
-        toolResponse: toolResultPayload(event),
-        isError: !!(event as { isError?: boolean }).isError,
+        compactionReason:
+          (event as { customInstructions?: string }).customInstructions ||
+          "context_limit_reached",
       },
       ctx.cwd,
       ctx,
     ).catch(() => {
       /* fail-open */
     });
+  });
+
+  // ── Hook: tool_result (non-mutating only) ──
+  //
+  // Await OMNI and return `{ content: [...] }` so Pi REPLACES the raw tool
+  // output with the distilled version. Without this return, OMNI runs but
+  // its distillation never reaches the LLM.
+
+  pi.on("tool_result", async (event, ctx) => {
+    if (!omniEnabled) return undefined;
+    const name = (event as { toolName: string }).toolName;
+    if (EXCLUDE_TOOL_NAMES.has(name)) return undefined;
+
+    try {
+      const out = await runOmni(
+        "--post-hook",
+        {
+          hookEventName: "ToolResult",
+          sessionId: sessionId(ctx),
+          toolName: toolNameForOmni(name),
+          toolResponse: toolResultPayload(event),
+          isError: !!(event as { isError?: boolean }).isError,
+        },
+        ctx.cwd,
+        ctx,
+      );
+
+      const updated = out?.hookSpecificOutput?.updatedResponse;
+      if (typeof updated === "string" && updated.length > 0) {
+        return { content: [{ type: "text" as const, text: updated }] };
+      }
+      return undefined;
+    } catch {
+      /* fail-open */
+      return undefined;
+    }
   });
 }
