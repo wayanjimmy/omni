@@ -15,32 +15,81 @@ struct Asset;
 #[derive(Debug, Deserialize)]
 struct TomlDocument {
     schema_version: u32,
+    #[serde(alias = "signals")]
     filters: Option<HashMap<String, FilterConfig>>,
     tests: Option<HashMap<String, Vec<TestConfig>>>,
 }
 
+/// OMNI Signal Schema v2 (backward-compatible with v1).
+///
+/// v1 field names are accepted via `#[serde(alias)]`:
+///   - `match_command`     → `trigger_pattern` (v2)
+///   - `strip_lines_matching` → `noise_patterns` (v2)
+///   - `keep_lines_matching`  → `signal_patterns` (v2)
+///   - `match_output`      → `output_matchers` (v2)
+///   - `replace_rules`     → `transform_rules` (v2)
+///   - `on_empty`          → `fallback_message` (v2)
 #[derive(Debug, Deserialize)]
 struct FilterConfig {
     description: Option<String>,
-    match_command: Option<String>,
+
+    // v2: trigger_pattern (v1 alias: match_command)
+    #[serde(alias = "match_command")]
+    trigger_pattern: Option<String>,
+
     #[serde(default)]
     strip_ansi: bool,
     #[serde(default = "default_confidence")]
     confidence: f32,
 
-    #[serde(default)]
-    match_output: Vec<MatchOutputConfig>,
+    // v2: output_matchers (v1 alias: match_output)
+    #[serde(default, alias = "match_output")]
+    output_matchers: Vec<MatchOutputConfig>,
 
-    #[serde(default)]
-    replace_rules: Vec<ReplaceRuleConfig>,
+    // v2: transform_rules (v1 alias: replace_rules)
+    #[serde(default, alias = "replace_rules")]
+    transform_rules: Vec<ReplaceRuleConfig>,
 
-    strip_lines_matching: Option<Vec<String>>,
-    keep_lines_matching: Option<Vec<String>>,
+    // v2: noise_patterns (v1 alias: strip_lines_matching)
+    #[serde(alias = "strip_lines_matching")]
+    noise_patterns: Option<Vec<String>>,
+
+    // v2: signal_patterns (v1 alias: keep_lines_matching)
+    #[serde(alias = "keep_lines_matching")]
+    signal_patterns: Option<Vec<String>>,
 
     max_lines: Option<usize>,
-    on_empty: Option<String>,
+
+    // v2: fallback_message (v1 alias: on_empty)
+    #[serde(alias = "on_empty")]
+    fallback_message: Option<String>,
 
     project_types: Option<Vec<String>>,
+
+    // ─── v2-only fields ─────────────────────────────────────────────
+    /// Semantic classification hint: Critical, Important, Context, Noise.
+    /// When set, overrides the scorer's automatic tier assignment for this signal.
+    semantic_tier: Option<String>,
+
+    /// Free-text hint for AI agents describing what this signal does and when
+    /// to pay attention to its output.
+    agent_hint: Option<String>,
+
+    /// Target compression ratio (0.0–1.0). A value of 0.3 means "try to keep
+    /// only 30% of the original output". Used by adaptive compression.
+    compress_ratio_target: Option<f32>,
+
+    /// Tool family classification: build, test, lint, deploy, infra, vcs.
+    /// Enables domain-level signal stacking.
+    tool_family: Option<String>,
+
+    /// Priority weight override (default 100). Higher = evaluated first.
+    #[serde(default = "default_priority")]
+    priority: u32,
+}
+
+fn default_priority() -> u32 {
+    100
 }
 
 fn default_confidence() -> f32 {
@@ -81,6 +130,13 @@ pub struct TomlFilter {
     confidence: f32,
     pub project_types: Option<Vec<String>>,
     pub inline_tests: Vec<TestConfig>,
+
+    // v2 fields
+    pub semantic_tier: Option<String>,
+    pub agent_hint: Option<String>,
+    pub compress_ratio_target: Option<f32>,
+    pub tool_family: Option<String>,
+    pub priority: u32,
 }
 
 #[derive(Clone)]
@@ -240,9 +296,9 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
     let doc: TomlDocument = toml::from_str(&content)
         .with_context(|| format!("Failed to parse TOML in {}", path.display()))?;
 
-    if doc.schema_version > 1 {
+    if doc.schema_version > 2 {
         warnings.push(format!(
-            "newer TOML schema version {} in {}",
+            "unsupported TOML schema version {} in {} (max supported: 2)",
             doc.schema_version,
             path.display()
         ));
@@ -254,10 +310,10 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
         let mut tests_map = doc.tests.unwrap_or_default();
 
         for (name, config) in filters {
-            let cmd_pattern = match config.match_command {
+            let cmd_pattern = match config.trigger_pattern {
                 Some(ref c) if !c.is_empty() => c,
                 _ => {
-                    warnings.push(format!("skip filter '{}': missing match_command", name));
+                    warnings.push(format!("skip signal '{}': missing trigger_pattern", name));
                     continue;
                 }
             };
@@ -272,12 +328,12 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
 
             let mut replace_rules = Vec::new();
             let mut replace_failed = false;
-            for rr in config.replace_rules {
+            for rr in config.transform_rules {
                 match Regex::new(&rr.pattern) {
                     Ok(r) => replace_rules.push((r, rr.replacement)),
                     Err(e) => {
                         warnings.push(format!(
-                            "skip invalid replace regex in filter '{}': {}",
+                            "skip invalid transform regex in signal '{}': {}",
                             name, e
                         ));
                         replace_failed = true;
@@ -291,12 +347,12 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
 
             let mut match_output = Vec::new();
             let mut mo_failed = false;
-            for mo in config.match_output {
+            for mo in config.output_matchers {
                 let pattern = match Regex::new(&mo.pattern) {
                     Ok(r) => r,
                     Err(e) => {
                         warnings.push(format!(
-                            "skip invalid match_output pattern in '{}': {}",
+                            "skip invalid output_matcher pattern in '{}': {}",
                             name, e
                         ));
                         mo_failed = true;
@@ -308,7 +364,7 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
                         Ok(r) => Some(r),
                         Err(e) => {
                             warnings.push(format!(
-                                "skip invalid match_output unless in '{}': {}",
+                                "skip invalid output_matcher unless in '{}': {}",
                                 name, e
                             ));
                             mo_failed = true;
@@ -327,28 +383,28 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
                 continue;
             }
 
-            let line_filter = if let Some(strips) = config.strip_lines_matching {
+            let line_filter = if let Some(strips) = config.noise_patterns {
                 let mut rules = Vec::new();
                 for s in strips {
                     match Regex::new(&s) {
                         Ok(r) => rules.push(r),
                         Err(e) => {
                             warnings.push(format!(
-                                "skip invalid strip regex in filter '{}': {}",
+                                "skip invalid noise_pattern in signal '{}': {}",
                                 name, e
                             ));
                         }
                     }
                 }
                 LineFilter::Strip(rules)
-            } else if let Some(keeps) = config.keep_lines_matching {
+            } else if let Some(keeps) = config.signal_patterns {
                 let mut rules = Vec::new();
                 for k in keeps {
                     match Regex::new(&k) {
                         Ok(r) => rules.push(r),
                         Err(e) => {
                             warnings.push(format!(
-                                "skip invalid keep regex in filter '{}': {}",
+                                "skip invalid signal_pattern in signal '{}': {}",
                                 name, e
                             ));
                         }
@@ -370,10 +426,16 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
                 match_output,
                 line_filter,
                 max_lines: config.max_lines,
-                on_empty: config.on_empty,
+                on_empty: config.fallback_message,
                 confidence: config.confidence,
                 project_types: config.project_types,
                 inline_tests,
+                // v2 fields
+                semantic_tier: config.semantic_tier,
+                agent_hint: config.agent_hint,
+                compress_ratio_target: config.compress_ratio_target,
+                tool_family: config.tool_family,
+                priority: config.priority,
             });
         }
     }
@@ -384,7 +446,7 @@ pub fn load_from_file(path: &Path) -> Result<LoadReport> {
     })
 }
 
-/// Intelligent Repair for Filter TOMLs
+/// Intelligent Repair for Signal TOMLs
 pub fn try_repair_file(path: &Path) -> Result<bool> {
     let content = fs::read_to_string(path)?;
     let mut repaired = content.clone();
@@ -396,13 +458,18 @@ pub fn try_repair_file(path: &Path) -> Result<bool> {
         changed = true;
     }
 
-    // 2. Dangerous catch-all patterns
-    if repaired.contains("match_command = \".*\"") {
-        repaired = repaired.replace(
-            "match_command = \".*\"",
-            "# match_command = \".*\" # [OMNI: disabled because it intercepts all commands]",
-        );
-        changed = true;
+    // 2. Dangerous catch-all patterns (check both v1 and v2 field names)
+    for field in ["match_command", "trigger_pattern"] {
+        let catchall = format!("{field} = \".*\"");
+        if repaired.contains(&catchall) {
+            repaired = repaired.replace(
+                &catchall,
+                &format!(
+                    "# {field} = \".*\" # [OMNI: disabled because it intercepts all commands]"
+                ),
+            );
+            changed = true;
+        }
     }
 
     // 3. Simple syntax cleanups
@@ -410,19 +477,17 @@ pub fn try_repair_file(path: &Path) -> Result<bool> {
     let cleaned: Vec<String> = repaired.lines().map(|l| l.trim_end().to_string()).collect();
     repaired = cleaned.join("\n");
 
-    // 3.5 Repair learned filters missing match_command (causes noisy doctor warnings)
-    // Strategy: if a [filters.learned_*] block doesn't declare match_command, insert a safe
-    // non-matching default (match_command = "^$") right after the table header.
-    //
-    // This preserves the contract that filters must be explicit about command targeting,
-    // while avoiding "skip filter ... missing match_command" spam for legacy learned.toml.
+    // 3.5 Repair learned signals missing trigger_pattern/match_command
+    // Strategy: if a [filters.learned_*] or [signals.learned_*] block doesn't
+    // declare trigger_pattern or match_command, insert a safe non-matching
+    // default (trigger_pattern = "^$") right after the table header.
     if path
         .file_name()
         .and_then(|s| s.to_str())
         .is_some_and(|n| n == "learned.toml")
     {
-        let header_re = Regex::new(r"(?m)^\[filters\.(learned_[^\]]+)\]\s*$")?;
-        let match_command_re = Regex::new(r"(?m)^\s*match_command\s*=")?;
+        let header_re = Regex::new(r"(?m)^\[(filters|signals)\.(learned_[^\]]+)\]\s*$")?;
+        let trigger_re = Regex::new(r"(?m)^\s*(match_command|trigger_pattern)\s*=")?;
         let mut out = String::new();
         let mut last = 0;
         for m in header_re.find_iter(&repaired) {
@@ -430,17 +495,18 @@ pub fn try_repair_file(path: &Path) -> Result<bool> {
             out.push_str(&repaired[last..m.end()]);
             out.push('\n');
 
-            // Look ahead until next [filters.*] header or EOF, and see if match_command exists.
+            // Look ahead until next [filters.*] or [signals.*] header or EOF
             let rest = &repaired[m.end()..];
-            let next_header_idx = rest.find("\n[filters.").unwrap_or(rest.len());
+            let next_header_idx = rest
+                .find("\n[filters.")
+                .unwrap_or(rest.len())
+                .min(rest.find("\n[signals.").unwrap_or(rest.len()));
             let block = &rest[..next_header_idx];
-            let has_match_command = match_command_re.is_match(block);
-            if !has_match_command {
-                out.push_str("match_command = \"^$\"\n");
+            if !trigger_re.is_match(block) {
+                out.push_str("trigger_pattern = \"^$\"\n");
                 changed = true;
             }
 
-            // Continue from the original position (no index drift from inserted text)
             last = m.end();
         }
         if last > 0 {
@@ -548,18 +614,18 @@ fn create_filter_from_config(
     tests_map: &mut HashMap<String, Vec<TestConfig>>,
 ) -> Result<TomlFilter> {
     let cmd_pattern = config
-        .match_command
+        .trigger_pattern
         .as_ref()
         .filter(|c| !c.is_empty())
-        .context("missing match_command")?;
+        .context("missing trigger_pattern")?;
     let match_regex = Regex::new(cmd_pattern)?;
     let mut replace_rules = Vec::new();
-    for rr in config.replace_rules {
+    for rr in config.transform_rules {
         replace_rules.push((Regex::new(&rr.pattern)?, rr.replacement));
     }
 
     let mut match_output = Vec::new();
-    for mo in config.match_output {
+    for mo in config.output_matchers {
         let pattern = Regex::new(&mo.pattern)?;
         let unless = match mo.unless {
             Some(u) => Some(Regex::new(&u)?),
@@ -572,13 +638,13 @@ fn create_filter_from_config(
         });
     }
 
-    let line_filter = if let Some(strips) = config.strip_lines_matching {
+    let line_filter = if let Some(strips) = config.noise_patterns {
         let mut rules = Vec::new();
         for s in strips {
             rules.push(Regex::new(&s)?);
         }
         LineFilter::Strip(rules)
-    } else if let Some(keeps) = config.keep_lines_matching {
+    } else if let Some(keeps) = config.signal_patterns {
         let mut rules = Vec::new();
         for k in keeps {
             rules.push(Regex::new(&k)?);
@@ -601,10 +667,15 @@ fn create_filter_from_config(
         match_output,
         line_filter,
         max_lines: config.max_lines,
-        on_empty: config.on_empty,
+        on_empty: config.fallback_message,
         confidence: config.confidence,
         project_types: config.project_types,
         inline_tests,
+        semantic_tier: config.semantic_tier,
+        agent_hint: config.agent_hint,
+        compress_ratio_target: config.compress_ratio_target,
+        tool_family: config.tool_family,
+        priority: config.priority,
     })
 }
 
@@ -870,6 +941,11 @@ mod tests {
             on_empty: None,
             project_types: None,
             inline_tests: vec![],
+            semantic_tier: None,
+            agent_hint: None,
+            compress_ratio_target: None,
+            tool_family: None,
+            priority: 100,
         };
         let input = "hello\nnoisy line\nworld";
         let score = filter.score(input);
@@ -891,6 +967,11 @@ mod tests {
             on_empty: None,
             project_types: None,
             inline_tests: vec![],
+            semantic_tier: None,
+            agent_hint: None,
+            compress_ratio_target: None,
+            tool_family: None,
+            priority: 100,
         };
         let input = "\x1b[31mhello\x1b[0m\nnoisy\nworld";
         assert_eq!(filter.apply(input), "hello\nworld");
@@ -915,6 +996,11 @@ mod tests {
             on_empty: None,
             project_types: None,
             inline_tests: vec![],
+            semantic_tier: None,
+            agent_hint: None,
+            compress_ratio_target: None,
+            tool_family: None,
+            priority: 100,
         };
         assert_eq!(filter.apply("Wait\nSUCCESS\nNoisy"), "done");
     }
@@ -967,7 +1053,7 @@ mod tests {
     #[test]
     fn test_verify_all_builtin_filters_pass_their_inline_tests() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let filters_dir = std::path::Path::new(&manifest_dir).join("filters");
+        let filters_dir = std::path::Path::new(&manifest_dir).join("signals");
         let report = load_from_dir(&filters_dir);
 
         // Ensure we loaded something
@@ -1002,6 +1088,11 @@ mod tests {
             on_empty: None,
             project_types: Some(vec!["rust".to_string()]),
             inline_tests: vec![],
+            semantic_tier: None,
+            agent_hint: None,
+            compress_ratio_target: None,
+            tool_family: None,
+            priority: 100,
         };
 
         // It should match since we are in a Rust project context

@@ -18,8 +18,19 @@ pub fn format_bytes(n: u64) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub fn format_tokens(bytes: u64) -> String {
     let tokens = estimate_tokens(bytes as usize, ContentHint::Mixed) as u64;
+    if tokens < 1000 {
+        format!("{}", tokens)
+    } else if tokens < 1_000_000 {
+        format!("{:.0}K", tokens as f64 / 1_000.0)
+    } else {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    }
+}
+
+pub fn format_exact_tokens(tokens: u64) -> String {
     if tokens < 1000 {
         format!("{}", tokens)
     } else if tokens < 1_000_000 {
@@ -237,7 +248,7 @@ fn run_default(store: &Store) -> Result<()> {
     let periods = store.multi_period_stats()?;
     let (rewind_stored, rewind_retrieved) = store.rewind_metrics()?;
 
-    let has_data = periods.iter().any(|(_, count, _, _)| *count > 0);
+    let has_data = periods.iter().any(|(_, count, _, _, _, _)| *count > 0);
 
     println!();
     print_separator();
@@ -258,20 +269,25 @@ fn run_default(store: &Store) -> Result<()> {
     }
 
     // Multi-period rows
-    for (label, count, input, output) in &periods {
+    for (label, count, input, output, raw_tokens, filtered_tokens) in &periods {
         if *count == 0 && label != "All Time" {
             continue;
         }
 
-        let input_tokens = format_tokens(*input);
-        let output_tokens = format_tokens(*output);
-        let reduction_pct = if *input > 0 {
+        let input_tokens_str = format_exact_tokens(*raw_tokens);
+        let output_tokens_str = format_exact_tokens(*filtered_tokens);
+
+        let reduction_pct = if *raw_tokens > 0 {
+            100.0 * (1.0 - *filtered_tokens as f64 / *raw_tokens as f64)
+        } else if *input > 0 {
+            // Fallback for legacy records that haven't been backfilled properly
             100.0 * (1.0 - *output as f64 / *input as f64)
         } else {
             0.0
         };
-        let bytes_saved = input.saturating_sub(*output);
-        let cost = est_cost_usd(bytes_saved);
+
+        let tokens_saved = raw_tokens.saturating_sub(*filtered_tokens);
+        let cost = (tokens_saved as f64 / 1_000_000.0) * crate::guard::config::get_input_cost();
 
         let pct_colored = if reduction_pct > 70.0 {
             format!("{:.1}% saved", reduction_pct).bright_green()
@@ -285,8 +301,8 @@ fn run_default(store: &Store) -> Result<()> {
             "  {:<12} {:>3} commands │ {:>4} → {:<4} tokens │  {} │ ~${:.2} USD",
             format!("{}:", label).bright_white().bold(),
             format_number(*count).cyan(),
-            input_tokens.red(),
-            output_tokens.green(),
+            input_tokens_str.red(),
+            output_tokens_str.green(),
             pct_colored,
             cost,
         );
@@ -402,9 +418,11 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
         ("last 30 days", chrono::Utc::now().timestamp() - 30 * 86400)
     };
 
-    let (count, input_total, output_total, sum_latency, _max_latency) =
+    let (count, input_total, output_total, sum_latency, _max_latency, raw_tokens, filtered_tokens) =
         store.aggregate_stats(since)?;
-    let reduction_pct = if input_total > 0 {
+    let reduction_pct = if raw_tokens > 0 {
+        100.0 * (1.0 - filtered_tokens as f64 / raw_tokens as f64)
+    } else if input_total > 0 {
         100.0 * (1.0 - output_total as f64 / input_total as f64)
     } else {
         0.0
@@ -414,7 +432,6 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
     } else {
         0.0
     };
-    let bytes_saved = input_total.saturating_sub(output_total);
     let (rewind_stored, rewind_retrieved) = store.rewind_metrics()?;
 
     println!();
@@ -438,7 +455,16 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
         format_bytes(output_total).green()
     );
 
-    let cost_saved = est_cost_usd(bytes_saved);
+    let tokens_saved = raw_tokens.saturating_sub(filtered_tokens);
+    let cost_saved = (tokens_saved as f64 / 1_000_000.0) * crate::guard::config::get_input_cost();
+
+    println!(
+        "  {:<20} {} {} {}",
+        "Tokens Reduced:".bright_black(),
+        format_exact_tokens(raw_tokens).red(),
+        "→".bright_black(),
+        format_exact_tokens(filtered_tokens).green()
+    );
 
     let ratio_msg = format!("{:.1}% reduction", reduction_pct);
     let ratio_colored = if reduction_pct > 70.0 {
@@ -451,7 +477,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
     println!("  {:<20} {}", "Signal Ratio:".bright_black(), ratio_colored);
     println!(
         "  {:<20} {}",
-        "Estimated Savings:".bright_black(),
+        "Actual Savings:".bright_black(),
         format!("~${:.3} USD", cost_saved).bold().bright_cyan()
     );
     println!(
@@ -721,7 +747,7 @@ fn run_json(store: &Store) -> Result<()> {
     let periods = store.multi_period_stats()?;
     let top_commands = get_top_commands(store, 0, 100);
     let (rewind_stored, rewind_retrieved) = store.rewind_metrics()?;
-    let (count, _, _, sum_latency, _) = store.aggregate_stats(0)?;
+    let (count, _, _, sum_latency, _, _, _) = store.aggregate_stats(0)?;
 
     let avg_latency = if count > 0 {
         sum_latency as f64 / count as f64
@@ -731,25 +757,30 @@ fn run_json(store: &Store) -> Result<()> {
 
     let periods_json: Vec<serde_json::Value> = periods
         .iter()
-        .map(|(label, count, input, output)| {
-            let input_tokens = estimate_tokens(*input as usize, ContentHint::Mixed) as u64;
-            let output_tokens = estimate_tokens(*output as usize, ContentHint::Mixed) as u64;
-            let savings_pct = if *input > 0 {
-                (100.0 * (1.0 - *output as f64 / *input as f64) * 10.0).round() / 10.0
-            } else {
-                0.0
-            };
-            let bytes_saved = input.saturating_sub(*output);
-            let usd_saved = est_cost_usd(bytes_saved);
-            serde_json::json!({
-                "label": label.to_lowercase().replace(' ', "_"),
-                "commands": count,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "savings_pct": savings_pct,
-                "usd_saved": (usd_saved * 100.0).round() / 100.0,
-            })
-        })
+        .map(
+            |(label, count, input, output, raw_tokens, filtered_tokens)| {
+                let savings_pct = if *raw_tokens > 0 {
+                    (100.0 * (1.0 - *filtered_tokens as f64 / *raw_tokens as f64) * 10.0).round()
+                        / 10.0
+                } else if *input > 0 {
+                    (100.0 * (1.0 - *output as f64 / *input as f64) * 10.0).round() / 10.0
+                } else {
+                    0.0
+                };
+                let tokens_saved = raw_tokens.saturating_sub(*filtered_tokens);
+                let usd_saved =
+                    (tokens_saved as f64 / 1_000_000.0) * crate::guard::config::get_input_cost();
+                serde_json::json!({
+                    "label": label.to_lowercase().replace(' ', "_"),
+                    "commands": count,
+                    "input_tokens": raw_tokens,
+                    "output_tokens": filtered_tokens,
+                    "savings_pct": savings_pct,
+                    "usd_saved": (usd_saved * 100.0).round() / 100.0,
+                    "measurement_method": if *raw_tokens > 0 { "actual" } else { "estimated" },
+                })
+            },
+        )
         .collect();
 
     let commands_json: Vec<serde_json::Value> = top_commands

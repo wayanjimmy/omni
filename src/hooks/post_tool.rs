@@ -148,8 +148,12 @@ pub fn process_payload(
         let profile = crate::pipeline::registry::resolve_profile_for_chain(clean_command);
 
         // 1. Initial Scoring (to evaluate learning/stats)
-        let segments =
-            scorer::score_segments(&content, profile.segmentation, session_guard.as_deref());
+        let segments = scorer::score_segments(
+            &content,
+            profile.segmentation,
+            session_guard.as_deref(),
+            clean_command,
+        );
 
         // 2. Collapse repetitive lines SEBELUM distill
         let collapse_result = collapse::collapse(&content, &profile.collapse);
@@ -166,6 +170,7 @@ pub fn process_payload(
                 &effective_input,
                 profile.segmentation,
                 session_guard.as_deref(),
+                clean_command,
             )
         } else {
             segments
@@ -197,7 +202,8 @@ pub fn process_payload(
 
     // Re-check segments from content for metadata/learning
     let profile = crate::pipeline::registry::resolve_profile(clean_command);
-    let check_segments = scorer::score_segments(&content, profile.segmentation, None);
+    let check_segments =
+        scorer::score_segments(&content, profile.segmentation, None, clean_command);
 
     let noise_count = check_segments
         .iter()
@@ -322,6 +328,9 @@ pub fn process_payload(
     let latency_ms = start.elapsed().as_millis() as u32;
 
     let kept = check_segments.len() - noise_count;
+    let raw_tokens = crate::util::token_estimate::count_tokens(&content, "cl100k_base");
+    let filtered_tokens = crate::util::token_estimate::count_tokens(&final_out, "cl100k_base");
+
     let result = DistillResult {
         output: final_out.clone(),
         route: route.clone(),
@@ -339,6 +348,8 @@ pub fn process_payload(
         segments_kept: kept,
         segments_dropped: noise_count,
         collapse_savings: collapse_savings_data,
+        raw_tokens,
+        filtered_tokens,
     };
 
     if let Some(ref s) = store {
