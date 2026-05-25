@@ -442,31 +442,21 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
             } else if fix_mode {
                 let _ = crate::guard::trust::trust_project(&cwd);
                 println!(
-                    "   {:<15} .omni/filters/ (TRUSTED) {}",
+                    "   {:<15} .omni/{dir_label}/ (TRUSTED) {}",
                     "Project:".bright_black(),
                     "[FIXED]".green().bold()
                 );
             } else {
-                if fix_mode {
-                    let _ = crate::guard::trust::trust_project(&cwd);
-                    println!(
-                        "   {:<15} .omni/{dir_label}/ (TRUSTED) {}",
-                        "Project:".bright_black(),
-                        "[FIXED]".green().bold()
-                    );
-                } else {
-                    println!(
-                        "   {:<15} .omni/{dir_label}/ ({} signals, NOT TRUSTED) {}",
-                        "Project:".bright_black(),
-                        local_report.filters.len().to_string().yellow(),
-                        "[WARNING]".yellow().bold()
-                    );
-                    warnings.push(
-                        "Project signals found but not trusted. Run: `omni doctor --fix`."
-                            .to_string(),
-                    );
-                    all_ok = false;
-                }
+                println!(
+                    "   {:<15} .omni/{dir_label}/ ({} signals, NOT TRUSTED) {}",
+                    "Project:".bright_black(),
+                    local_report.filters.len().to_string().yellow(),
+                    "[WARNING]".yellow().bold()
+                );
+                warnings.push(
+                    "Project signals found but not trusted. Run: `omni doctor --fix`.".to_string(),
+                );
+                all_ok = false;
             }
         } else {
             println!(
