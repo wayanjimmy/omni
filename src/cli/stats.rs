@@ -104,7 +104,7 @@ fn group_and_calculate_stats(
         })
         .collect();
 
-    result.sort_by_key(|a| std::cmp::Reverse(a.1));
+    result.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     if limit > 0 {
         result.truncate(limit);
     }
