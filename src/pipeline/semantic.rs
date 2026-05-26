@@ -124,6 +124,7 @@ fn is_blank_or_decorative(lines: &[&str]) -> bool {
     })
 }
 
+#[allow(clippy::collapsible_match)]
 fn is_critical(lower_text: &str, tool_family: Option<&str>) -> bool {
     // Tool-specific critical markers
     if let Some(tool) = tool_family {
@@ -168,6 +169,7 @@ fn is_critical(lower_text: &str, tool_family: Option<&str>) -> bool {
         || lower_text.contains("failed")
 }
 
+#[allow(clippy::collapsible_match)]
 fn is_diagnostic(lower_text: &str, tool_family: Option<&str>) -> bool {
     if let Some(tool) = tool_family {
         match tool {

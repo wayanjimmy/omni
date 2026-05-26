@@ -82,18 +82,16 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     } // Adjust if args doesn't contain the command itself
     while i < args.len() {
         match args[i].as_str() {
-            "--test-filter" => {
-                if i + 1 < args.len() {
-                    return run_test_filter(&args[i + 1]);
-                }
+            "--test-filter" if i + 1 < args.len() => {
+                return run_test_filter(&args[i + 1]);
             }
+            "--test-filter" => {} // Handle edge case
             "--benchmark" => return run_benchmark(),
             "--coverage" => return run_coverage(),
-            "--validate" => {
-                if i + 1 < args.len() {
-                    return run_validate(&args[i + 1]);
-                }
+            "--validate" if i + 1 < args.len() => {
+                return run_validate(&args[i + 1]);
             }
+            "--validate" => {} // Handle edge case
             "doctor" => {}
             _ => {}
         }
