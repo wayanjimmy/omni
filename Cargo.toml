@@ -29,7 +29,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 # MCP Server  
-rmcp = { version = "0.1", features = ["server", "transport-io"] }
+rmcp = { version = "1.4", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
 # Database (SQLite bundled — no system dep)
@@ -66,6 +66,7 @@ ureq = { version = "2", features = ["json"] }
 rust-embed = "8"
 strsim = "0.11"
 tiktoken-rs = "0.5"
+schemars = "1.2.1"
 
 [dev-dependencies]
 insta = "1"  # snapshot testing
