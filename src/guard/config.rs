@@ -23,6 +23,7 @@ pub struct AgentConfig {
     pub enable_readfile_distillation: Option<bool>,
     pub enable_grep_distillation: Option<bool>,
     pub enable_webfetch_distillation: Option<bool>,
+    pub pinned_files: Option<Vec<String>>,
 }
 
 impl AgentConfig {
@@ -46,6 +47,17 @@ impl AgentConfig {
 
     pub fn webfetch_enabled(&self) -> bool {
         self.enable_webfetch_distillation.unwrap_or(true)
+    }
+
+    pub fn pinned_files(&self) -> Vec<String> {
+        self.pinned_files.clone().unwrap_or_else(|| {
+            vec![
+                "AGENTS.md".to_string(),
+                "CLAUDE.md".to_string(),
+                ".cursorrules".to_string(),
+                ".omni/CONTEXT.md".to_string(),
+            ]
+        })
     }
 }
 

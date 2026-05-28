@@ -21,6 +21,18 @@ pub const MAX_DISTILLATION_HISTORY: usize = 5;
 /// Threshold for meaningful compression (e.g., 0.90 means at least 10% savings)
 pub const MEANINGFUL_COMPRESSION_THRESHOLD: f64 = 0.90;
 
+/// Default context window size hint (tokens). Configurable via OMNI_CONTEXT_WINDOW env.
+pub const DEFAULT_CONTEXT_WINDOW_SIZE: u64 = 200_000;
+
+/// Threshold ratio at which pressure becomes Warning (default 0.65)
+pub const DEFAULT_PRESSURE_WARNING_THRESHOLD: f64 = 0.65;
+
+/// Threshold ratio at which pressure becomes Critical (default 0.82)
+pub const DEFAULT_PRESSURE_CRITICAL_THRESHOLD: f64 = 0.82;
+
+/// Minimum tool calls between repeated pressure warnings
+pub const PRESSURE_WARNING_COOLDOWN: u32 = 5;
+
 // 1. Segmentation Strategy — how to split tokens
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SegmentationMode {
@@ -46,6 +58,25 @@ pub enum SignalTier {
     Context,   // Supporting lines — include if space allows
     Important, // Warning, changed file — biasanya include
     Critical,  // Error, exception, FAILED — selalu include
+}
+
+// Context window pressure level
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ContextPressure {
+    #[default]
+    Normal, // < warning threshold
+    Warning,  // warning..critical threshold
+    Critical, // > critical threshold
+}
+
+impl std::fmt::Display for ContextPressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContextPressure::Normal => write!(f, "Normal"),
+            ContextPressure::Warning => write!(f, "Warning"),
+            ContextPressure::Critical => write!(f, "Critical"),
+        }
+    }
 }
 
 // 3. Route — path distilasi
@@ -184,6 +215,22 @@ pub struct SessionState {
     pub cumulative_filtered_tokens: u64,
     pub top_command_info: Option<(String, f32)>, // (command, savings_pct)
     pub toolchain_hints: std::collections::HashMap<String, String>,
+
+    // Context Pressure (v0.5.8-rc3)
+    #[serde(default)]
+    pub context_window_size_hint: Option<u64>,
+    #[serde(default)]
+    pub estimated_current_tokens: u64,
+    #[serde(default)]
+    pub context_pressure: ContextPressure,
+    #[serde(default)]
+    pub last_pressure_warning_at: Option<u32>,
+
+    // Critical file pinning (v0.5.8-rc3)
+    #[serde(default)]
+    pub pinned_files: Vec<String>,
+    #[serde(default)]
+    pub pinned_refresh_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +309,82 @@ impl SessionState {
         self.last_commands.insert(0, cmd.to_string());
         self.last_commands.truncate(MAX_COMMAND_HISTORY);
         self.last_active = chrono::Utc::now().timestamp();
+    }
+
+    /// Get the effective context window size (env > field > default)
+    pub fn context_window_size(&self) -> u64 {
+        std::env::var("OMNI_CONTEXT_WINDOW")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .or(self.context_window_size_hint)
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW_SIZE)
+    }
+
+    /// Compute pressure thresholds from env or defaults
+    fn pressure_thresholds(&self) -> (f64, f64) {
+        let warn = std::env::var("OMNI_PRESSURE_WARN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_PRESSURE_WARNING_THRESHOLD);
+        let crit = std::env::var("OMNI_PRESSURE_CRITICAL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_PRESSURE_CRITICAL_THRESHOLD);
+        (warn, crit)
+    }
+
+    /// Recalculate context pressure from current estimated tokens
+    pub fn recalculate_pressure(&mut self) {
+        let window = self.context_window_size();
+        let ratio = self.estimated_current_tokens as f64 / window as f64;
+        let (warn_threshold, crit_threshold) = self.pressure_thresholds();
+
+        self.context_pressure = if ratio >= crit_threshold {
+            ContextPressure::Critical
+        } else if ratio >= warn_threshold {
+            ContextPressure::Warning
+        } else {
+            ContextPressure::Normal
+        };
+    }
+
+    /// Generate a pressure warning message, if warranted
+    pub fn pressure_warning(&self) -> Option<String> {
+        let window = self.context_window_size();
+        let pct = if window > 0 {
+            (self.estimated_current_tokens as f64 / window as f64 * 100.0) as u32
+        } else {
+            0
+        };
+        let est_k = self.estimated_current_tokens / 1000;
+        let win_k = window / 1000;
+
+        match self.context_pressure {
+            ContextPressure::Normal => None,
+            ContextPressure::Warning => Some(format!(
+                "⚠️ OMNI: Context ~{pct}% full (~{est_k}k/{win_k}k tokens). Consider compacting after completing current subtask."
+            )),
+            ContextPressure::Critical => Some(format!(
+                "🚨 OMNI: Context ~{pct}% full (~{est_k}k/{win_k}k tokens). COMPACT NOW before continuing."
+            )),
+        }
+    }
+
+    /// Check if a pressure warning should be emitted (respects cooldown)
+    pub fn should_emit_pressure_warning(&self) -> bool {
+        if self.context_pressure == ContextPressure::Normal {
+            return false;
+        }
+        match self.last_pressure_warning_at {
+            None => true,
+            Some(last) => {
+                let gap = self.command_count.saturating_sub(last);
+                // Always warn on first Critical, otherwise respect cooldown
+                (self.context_pressure == ContextPressure::Critical
+                    || self.context_pressure == ContextPressure::Warning)
+                    && gap >= PRESSURE_WARNING_COOLDOWN
+            }
+        }
     }
 }
 
@@ -392,5 +515,68 @@ mod tests {
         };
         // Use an epsilon check due to potential binary representation artifacts of f32 addition
         assert!((seg3.final_score() - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pressure_is_normal_when_tokens_low() {
+        let mut state = SessionState::new();
+        state.estimated_current_tokens = 50_000; // 25% of 200k default
+        state.recalculate_pressure();
+        assert_eq!(state.context_pressure, ContextPressure::Normal);
+        assert!(state.pressure_warning().is_none());
+    }
+
+    #[test]
+    fn pressure_transitions_to_warning() {
+        let mut state = SessionState::new();
+        state.estimated_current_tokens = 140_000; // 70% of 200k → Warning
+        state.recalculate_pressure();
+        assert_eq!(state.context_pressure, ContextPressure::Warning);
+        assert!(state.pressure_warning().is_some());
+        assert!(state.pressure_warning().unwrap().contains("⚠️"));
+    }
+
+    #[test]
+    fn pressure_transitions_to_critical() {
+        let mut state = SessionState::new();
+        state.estimated_current_tokens = 180_000; // 90% of 200k → Critical
+        state.recalculate_pressure();
+        assert_eq!(state.context_pressure, ContextPressure::Critical);
+        assert!(state.pressure_warning().unwrap().contains("🚨"));
+    }
+
+    #[test]
+    fn pressure_respects_custom_window_size() {
+        let mut state = SessionState::new();
+        state.context_window_size_hint = Some(100_000);
+        state.estimated_current_tokens = 70_000; // 70% of 100k → Warning
+        state.recalculate_pressure();
+        assert_eq!(state.context_pressure, ContextPressure::Warning);
+    }
+
+    #[test]
+    fn pressure_warning_respects_cooldown() {
+        let mut state = SessionState::new();
+        state.estimated_current_tokens = 140_000;
+        state.recalculate_pressure();
+
+        // First warning at command 0 → should emit
+        assert!(state.should_emit_pressure_warning());
+        state.last_pressure_warning_at = Some(0);
+
+        // Command 3 → within cooldown → should not emit
+        state.command_count = 3;
+        assert!(!state.should_emit_pressure_warning());
+
+        // Command 5 → at cooldown boundary → should emit
+        state.command_count = 5;
+        assert!(state.should_emit_pressure_warning());
+    }
+
+    #[test]
+    fn pressure_display_formatting() {
+        assert_eq!(format!("{}", ContextPressure::Normal), "Normal");
+        assert_eq!(format!("{}", ContextPressure::Warning), "Warning");
+        assert_eq!(format!("{}", ContextPressure::Critical), "Critical");
     }
 }

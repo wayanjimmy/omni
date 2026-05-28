@@ -268,6 +268,16 @@ fn detect_watch_paths(
     toolchain: &std::collections::HashMap<String, String>,
 ) -> Vec<String> {
     let mut paths: Vec<String> = vec![];
+    let config = crate::guard::config::load_config();
+    let agent_id = crate::agents::multiagent::detect_agent_id();
+    let agent_config = config.for_agent(&agent_id);
+
+    // Watch pinned files dynamically
+    for pinned in agent_config.pinned_files() {
+        if cwd.join(&pinned).exists() {
+            paths.push(pinned);
+        }
+    }
 
     if toolchain.contains_key("rust") {
         paths.push("Cargo.toml".to_string());
@@ -285,12 +295,12 @@ fn detect_watch_paths(
     if cwd.join("go.mod").exists() {
         paths.push("go.mod".to_string());
     }
-    if cwd.join("CLAUDE.md").exists() {
-        paths.push("CLAUDE.md".to_string());
-    }
-    if cwd.join(".omni").join("signals").exists() {
+    if !paths.contains(&".omni/signals/".to_string()) && cwd.join(".omni").join("signals").exists()
+    {
         paths.push(".omni/signals/".to_string());
-    } else if cwd.join(".omni").join("filters").exists() {
+    } else if !paths.contains(&".omni/filters/".to_string())
+        && cwd.join(".omni").join("filters").exists()
+    {
         paths.push(".omni/filters/".to_string());
     }
     if cwd.join("Makefile").exists() {
@@ -348,6 +358,9 @@ fn build_summary(state: &SessionState, now: i64) -> String {
 fn build_summary_with_context(state: &SessionState, now: i64, store: &Store, cwd: &str) -> String {
     let mut out = build_summary(state, now);
 
+    // Feature B: Critical File Pinning
+    out.push_str(&read_pinned_files(cwd));
+
     // Inject peer agent context (multi-agent awareness)
     if let Some(peer_ctx) = multiagent::build_peer_context(store, cwd) {
         out.push_str(&peer_ctx);
@@ -356,6 +369,41 @@ fn build_summary_with_context(state: &SessionState, now: i64, store: &Store, cwd
     // Inject cross-session project knowledge
     if let Some(knowledge_ctx) = multiagent::build_knowledge_context(store, cwd) {
         out.push_str(&knowledge_ctx);
+    }
+
+    out
+}
+
+/// Feature B: Read pinned files with length cap
+pub fn read_pinned_files(cwd: &str) -> String {
+    let cwd_path = std::path::Path::new(cwd);
+    let config = crate::guard::config::load_config();
+    let agent_id = crate::agents::multiagent::detect_agent_id();
+    let agent_config = config.for_agent(&agent_id);
+
+    let mut out = String::new();
+    let mut files_added = 0;
+
+    for pinned in agent_config.pinned_files() {
+        if files_added >= 3 {
+            break;
+        }
+
+        let file_path = cwd_path.join(&pinned);
+        if file_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&file_path)
+        {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                let mut capped_content = trimmed.to_string();
+                if capped_content.len() > 400 {
+                    capped_content.truncate(397);
+                    capped_content.push_str("...");
+                }
+                out.push_str(&format!("\n[Pinned: {}]\n{}\n", pinned, capped_content));
+                files_added += 1;
+            }
+        }
     }
 
     out

@@ -166,7 +166,8 @@ fn main() {
         }
 
         Mode::PreHook => {
-            if let Err(e) = hooks::pre_tool::run() {
+            let (store, session) = init_globals();
+            if let Err(e) = hooks::pre_tool::run(store, session) {
                 eprintln!("[omni] Pre-Hook error: {}", e);
                 std::process::exit(1);
             }
