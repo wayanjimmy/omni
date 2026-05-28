@@ -174,7 +174,7 @@ fn test_score_with_command_returns_segments() {
     let has_critical = segments
         .iter()
         .any(|s| s.tier == omni::pipeline::SignalTier::Critical);
-    assert!(has_critical, "Error line harus jadi Critical");
+    assert!(has_critical, "Error line should be Critical");
 }
 
 #[test]
@@ -213,10 +213,10 @@ fn test_omni_stats_shows_command_not_content_type() {
 
     let stats = store.get_per_command_stats(0, 10).unwrap();
     assert!(!stats.is_empty());
-    let (cmd, count, _, _) = &stats[0];
+    let (cmd, count, _, _, _, _) = &stats[0];
     assert!(
         cmd.contains("cargo"),
-        "Command column harus berisi command asli, got: {}",
+        "Command column should contain actual command, got: {}",
         cmd
     );
     assert_eq!(*count, 1);

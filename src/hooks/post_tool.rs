@@ -832,10 +832,10 @@ mod tests {
     #[test]
     fn processes_opencode_payload_format() {
         let input = r#"{"type":"tool_result","tool":"shell","output":"pytest\n5 passed in 2.1s","command":"pytest"}"#;
-        // OpenCode format harus diproses sama seperti Claude Code
+        // OpenCode format should be processed same as Claude Code
         let _out = process_payload(input, None, None);
-        // Jika content < threshold, bisa None — tapi jangan crash
-        // Test ini memverifikasi tidak ada panic
+        // If content < threshold, can be None — but don't crash
+        // This test verifies there is no panic
     }
 
     #[test]
@@ -847,11 +847,11 @@ mod tests {
             "result": long_output
         });
         let out = process_payload(&input.to_string(), None, None);
-        // Harus ada output (bukan None) untuk input panjang
-        // (cargo build dengan 200 baris harusnya di-distilasi)
+        // Should have output (not None) for long input
+        // (cargo build with 200 lines should be distilled)
         assert!(
             out.is_some(),
-            "Codex format harus di-distilasi jika output panjang"
+            "Codex format should be distilled if output is long"
         );
     }
 
@@ -868,7 +868,7 @@ mod tests {
         let out = process_payload(&input.to_string(), None, None);
         assert!(
             out.is_some(),
-            "Claude Code format harus tetap bekerja setelah refactor"
+            "Claude Code format should still work after refactor"
         );
     }
 

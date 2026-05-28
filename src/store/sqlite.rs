@@ -108,11 +108,13 @@ impl Store {
     }
 
     /// Per-filter breakdown: (filter_name, count, avg_reduction_pct)
-    pub fn filter_breakdown(&self, since: i64) -> Result<Vec<(String, u64, u64, u64)>> {
+    #[allow(clippy::type_complexity)]
+    pub fn filter_breakdown(&self, since: i64) -> Result<Vec<(String, u64, u64, u64, u64, u64)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT CASE WHEN command != '' THEN command ELSE filter_name END as grp_name, COUNT(*), 
-                    COALESCE(SUM(input_bytes), 0), COALESCE(SUM(output_bytes), 0)
+                    COALESCE(SUM(input_bytes), 0), COALESCE(SUM(output_bytes), 0),
+                    COALESCE(SUM(raw_tokens), 0), COALESCE(SUM(filtered_tokens), 0)
              FROM distillations WHERE ts >= ?1 GROUP BY grp_name ORDER BY COUNT(*) DESC"
         )?;
         let rows = stmt
@@ -122,6 +124,8 @@ impl Store {
                     row.get::<_, u64>(1)?,
                     row.get::<_, u64>(2)?,
                     row.get::<_, u64>(3)?,
+                    row.get::<_, u64>(4)?,
+                    row.get::<_, u64>(5)?,
                 ))
             })?
             .filter_map(|r| r.ok())
@@ -811,18 +815,21 @@ impl Store {
         results
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_per_command_stats(
         &self,
         since: i64,
         limit: usize,
-    ) -> Result<Vec<(String, u64, u64, u64)>> {
+    ) -> Result<Vec<(String, u64, u64, u64, u64, u64)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT
                 command,
                 COUNT(*) as calls,
                 COALESCE(SUM(input_bytes), 0) as total_input,
-                COALESCE(SUM(output_bytes), 0) as total_output
+                COALESCE(SUM(output_bytes), 0) as total_output,
+                COALESCE(SUM(raw_tokens), 0) as raw_tok,
+                COALESCE(SUM(filtered_tokens), 0) as filt_tok
             FROM distillations
             WHERE ts >= ?1 AND command != '' AND command != '[pipe]'
             GROUP BY command
@@ -837,6 +844,8 @@ impl Store {
                     row.get::<_, u64>(1)?,
                     row.get::<_, u64>(2)?,
                     row.get::<_, u64>(3)?,
+                    row.get::<_, u64>(4)?,
+                    row.get::<_, u64>(5)?,
                 ))
             })?
             .filter_map(|r| r.ok())

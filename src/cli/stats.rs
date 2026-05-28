@@ -78,29 +78,50 @@ fn format_number(n: u64) -> String {
 }
 
 fn group_and_calculate_stats(
-    items: Vec<(String, u64, u64, u64)>,
+    items: Vec<(String, u64, u64, u64, u64, u64)>,
     limit: usize,
-) -> Vec<(String, u64, f64)> {
-    let mut grouped: HashMap<String, (u64, u64, u64)> = HashMap::new();
+) -> Vec<(String, u64, f64, u64)> {
+    let mut grouped: HashMap<String, (u64, u64, u64, u64, u64)> = HashMap::new();
 
-    for (cmd, calls, input, output) in items {
+    for (cmd, calls, input, output, raw_tok, filt_tok) in items {
         // Group by the shortened version so things like "npm install x" and "npm install y" combine
         let key = shorten_command(&cmd, 18);
-        let entry = grouped.entry(key).or_insert((0, 0, 0));
+        let entry = grouped.entry(key).or_insert((0, 0, 0, 0, 0));
         entry.0 += calls;
         entry.1 += input;
         entry.2 += output;
+        entry.3 += raw_tok;
+        entry.4 += filt_tok;
     }
 
-    let mut result: Vec<(String, u64, f64)> = grouped
+    let mut result: Vec<(String, u64, f64, u64)> = grouped
         .into_iter()
-        .map(|(cmd, (calls, input, output))| {
-            let pct = if input > 0 {
+        .map(|(cmd, (calls, input, output, raw_tok, filt_tok))| {
+            let pct = if raw_tok > 0 {
+                100.0 * (1.0 - filt_tok as f64 / raw_tok as f64)
+            } else if input > 0 {
                 100.0 * (1.0 - output as f64 / input as f64)
             } else {
                 0.0
             };
-            (cmd, calls, pct)
+
+            let tokens_saved = if raw_tok > 0 {
+                raw_tok.saturating_sub(filt_tok)
+            } else if input > 0 {
+                let r = crate::util::token_estimate::estimate_tokens(
+                    input as usize,
+                    crate::util::token_estimate::ContentHint::Mixed,
+                );
+                let f = crate::util::token_estimate::estimate_tokens(
+                    output as usize,
+                    crate::util::token_estimate::ContentHint::Mixed,
+                );
+                r.saturating_sub(f) as u64
+            } else {
+                0
+            };
+
+            (cmd, calls, pct, tokens_saved)
         })
         .collect();
 
@@ -111,7 +132,7 @@ fn group_and_calculate_stats(
     result
 }
 
-fn get_top_commands(store: &Store, since: i64, limit: usize) -> Vec<(String, u64, f64)> {
+fn get_top_commands(store: &Store, since: i64, limit: usize) -> Vec<(String, u64, f64, u64)> {
     let raw = store
         .get_per_command_stats(since, limit * 3)
         .unwrap_or_default();
@@ -312,7 +333,7 @@ fn run_default(store: &Store) -> Result<()> {
 
     if !top_commands.is_empty() {
         println!("\n  {}", "Top Commands:".bold().bright_white());
-        for (cmd, count, pct) in &top_commands {
+        for (cmd, count, pct, tokens_saved) in &top_commands {
             let short_cmd = shorten_command(cmd, 18);
             let bar = format_bar_with_empty(*pct);
             let bar_colored = if *pct > 80.0 {
@@ -323,12 +344,19 @@ fn run_default(store: &Store) -> Result<()> {
                 bar.bright_red()
             };
 
+            let tokens_str = if *tokens_saved > 0 {
+                format!("(-{} tokens)", format_exact_tokens(*tokens_saved)).bright_black()
+            } else {
+                "".bright_black()
+            };
+
             println!(
-                "    {:<18} {}  {:>5.1}%  ({:>2}x)",
+                "    {:<18} {}  {:>5.1}%  ({:>2}x)  {}",
                 short_cmd.bright_cyan(),
                 bar_colored,
                 pct,
-                count
+                count,
+                tokens_str,
             );
         }
     }
@@ -523,7 +551,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
     } else {
         grouped_filters
             .iter()
-            .filter(|(_, _, pct)| *pct > 0.0)
+            .filter(|(_, _, pct, _)| *pct > 0.0)
             .take(10)
             .cloned()
             .collect()
@@ -543,21 +571,23 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
     if !display_filters.is_empty() {
         println!("\n {}", "By Command:".bold().bright_white());
         println!(
-            "   {}  {:<20} {:<12} {:>4} {:>7}  {}",
+            "   {}  {:<20} {:<12} {:>4} {:>7}  {:>10}  {}",
             "#".bright_black(),
             "CLI".bright_black(),
             "Agent".bright_black(),
             "Count".bright_black(),
             "Savings".bright_black(),
+            "Tokens Reduced".bright_black(),
             "Signal Strength".bright_black()
         );
         println!(
             "   {} {}",
             "──".bright_black(),
-            "──────────────────── ──────────── ───── ──────── ────────────────────".bright_black()
+            "──────────────────── ──────────── ───── ──────── ────────────── ────────────────────"
+                .bright_black()
         );
 
-        for (i, (name, cnt, pct)) in display_filters.iter().enumerate() {
+        for (i, (name, cnt, pct, tokens_saved)) in display_filters.iter().enumerate() {
             let bar = format_bar(*pct);
             let bar_colored = if *pct > 80.0 {
                 bar.bright_green()
@@ -585,13 +615,20 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
                 .map(|(agent_id, _)| agent_display_name(agent_id))
                 .unwrap_or("Terminal");
 
+            let tokens_str = if *tokens_saved > 0 {
+                format!("-{}", format_exact_tokens(*tokens_saved))
+            } else {
+                String::new()
+            };
+
             println!(
-                "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {}{}",
+                "  {:>2}. {:<20} {:<12} {:>4}x  {:>5.1}%  {:>14}  {}{}",
                 i + 1,
                 display_name.bright_cyan(),
                 agent_label.bright_blue(),
                 cnt,
                 pct,
+                tokens_str.bright_magenta(),
                 bar_colored,
                 suffix
             );
@@ -600,7 +637,7 @@ fn run_detail(args: &[String], store: &Store) -> Result<()> {
         if !all_flag {
             let filtered_count = grouped_filters
                 .iter()
-                .filter(|(_, _, pct)| *pct > 0.0)
+                .filter(|(_, _, pct, _)| *pct > 0.0)
                 .count();
             let hidden_zero = grouped_filters.len() - filtered_count;
 
@@ -785,11 +822,12 @@ fn run_json(store: &Store) -> Result<()> {
 
     let commands_json: Vec<serde_json::Value> = top_commands
         .iter()
-        .map(|(cmd, count, pct)| {
+        .map(|(cmd, count, pct, tokens_saved)| {
             serde_json::json!({
                 "command": cmd,
                 "count": count,
                 "savings_pct": pct,
+                "tokens_saved": tokens_saved,
             })
         })
         .collect();
