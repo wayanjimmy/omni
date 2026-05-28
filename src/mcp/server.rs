@@ -2,8 +2,11 @@ use crate::pipeline::scorer::score_segments;
 use crate::pipeline::{SessionState, SignalTier};
 use crate::session::learn::{apply_to_config, detect_patterns, generate_toml};
 use crate::store::sqlite::Store;
-use rmcp::handler::server::tool::ToolCallContext;
-use rmcp::{ServerHandler, tool};
+
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::{tool, tool_router};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -12,14 +15,83 @@ pub struct OmniServer {
     session: Arc<Mutex<SessionState>>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniRetrieveParams {
+    pub hash: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniLearnParams {
+    pub text: String,
+    pub apply: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniDensityParams {
+    pub text: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniQueryParams {
+    pub query: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniRecallParams {
+    pub tool: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniTrustParams {
+    pub project_path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniContextParams {
+    pub file_path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniSessionParams {
+    pub action: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniSearchParams {
+    pub query: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniHistoryParams {
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniExplainSavingsParams {
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniFindNoiseParams {
+    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct OmniKnowledgeParams {
+    pub action: String,
+    pub key: Option<String>,
+    pub value: Option<String>,
+}
+
 // Automatically bind tool signatures
-#[tool(tool_box)]
+#[tool_router(server_handler)]
 impl OmniServer {
     #[tool(
         name = "omni_retrieve",
         description = "Retrieve full content omitted by OMNI distillation (Hash from OMNI notice)"
     )]
-    pub async fn omni_retrieve(&self, #[tool(param)] hash: String) -> String {
+    pub async fn omni_retrieve(&self, params: Parameters<OmniRetrieveParams>) -> String {
+        let hash = params.0.hash;
         if let Some(content) = self.store.retrieve_rewind(&hash) {
             // Record retrieve event for adaptive compression feedback loop
             let cmd_prefix = self
@@ -40,11 +112,9 @@ impl OmniServer {
         name = "omni_learn",
         description = "Detect noise patterns in text and suggest TOML filters"
     )]
-    pub async fn omni_learn(
-        &self,
-        #[tool(param)] text: String,
-        #[tool(param)] apply: bool,
-    ) -> String {
+    pub async fn omni_learn(&self, params: Parameters<OmniLearnParams>) -> String {
+        let text = params.0.text;
+        let apply = params.0.apply;
         // 1. Run real pattern detection
         let candidates = detect_patterns(&text);
 
@@ -105,7 +175,8 @@ impl OmniServer {
         name = "omni_density",
         description = "Measure how much signal vs noise in text"
     )]
-    pub async fn omni_density(&self, #[tool(param)] text: String) -> String {
+    pub async fn omni_density(&self, params: Parameters<OmniDensityParams>) -> String {
+        let text = params.0.text;
         let current_session = self.session.lock().unwrap().clone();
 
         // Use generic Line segmentation for density analysis
@@ -145,7 +216,8 @@ impl OmniServer {
         name = "omni_query",
         description = "Query distillation history using OmniQL. Supported queries: 'errors in last N commands', 'warnings from <tool>', 'context for <file_path>', 'timeline today'"
     )]
-    pub async fn omni_query(&self, #[tool(param)] query: String) -> String {
+    pub async fn omni_query(&self, params: Parameters<OmniQueryParams>) -> String {
+        let query = params.0.query;
         match self.store.execute_omni_query(&query) {
             Ok(result) => serde_json::to_string_pretty(&result)
                 .unwrap_or_else(|e| format!("Serialization error: {}", e)),
@@ -157,7 +229,8 @@ impl OmniServer {
         name = "omni_recall",
         description = "Recall cross-session error patterns for a specific tool (e.g., cargo, npm) and what fixed them"
     )]
-    pub async fn omni_recall(&self, #[tool(param)] tool: String) -> String {
+    pub async fn omni_recall(&self, params: Parameters<OmniRecallParams>) -> String {
+        let tool = params.0.tool;
         let patterns = self.store.get_patterns(Some(&tool), 5);
         if patterns.is_empty() {
             return format!("No recurring patterns found for tool: {}", tool);
@@ -224,7 +297,8 @@ impl OmniServer {
         name = "omni_trust",
         description = "Trust project's local configurations explicitly"
     )]
-    pub async fn omni_trust(&self, #[tool(param)] project_path: String) -> String {
+    pub async fn omni_trust(&self, params: Parameters<OmniTrustParams>) -> String {
+        let project_path = params.0.project_path;
         let default_path = if project_path.is_empty() {
             ".".to_string()
         } else {
@@ -242,7 +316,8 @@ impl OmniServer {
         name = "omni_context",
         description = "Show lightweight dependency context for a file"
     )]
-    pub async fn omni_context(&self, #[tool(param)] file_path: String) -> String {
+    pub async fn omni_context(&self, params: Parameters<OmniContextParams>) -> String {
+        let file_path = params.0.file_path;
         if file_path.trim().is_empty() {
             return "Please provide a file_path".to_string();
         }
@@ -303,7 +378,8 @@ impl OmniServer {
         name = "omni_session",
         description = "Manage OMNI session state manually (status | context | clear)"
     )]
-    pub async fn omni_session(&self, #[tool(param)] action: String) -> String {
+    pub async fn omni_session(&self, params: Parameters<OmniSessionParams>) -> String {
+        let action = params.0.action;
         let action = if action.is_empty() {
             "status".to_string()
         } else {
@@ -387,7 +463,8 @@ impl OmniServer {
         name = "omni_search",
         description = "Search current session history (logs, outputs, commands)"
     )]
-    pub async fn omni_search(&self, #[tool(param)] query: String) -> String {
+    pub async fn omni_search(&self, params: Parameters<OmniSearchParams>) -> String {
+        let query = params.0.query;
         if query.trim().is_empty() {
             return "Please provide a query".to_string();
         }
@@ -407,7 +484,8 @@ impl OmniServer {
         name = "omni_history",
         description = "Show recent distillation history with per-call token savings and compression ratios"
     )]
-    pub async fn omni_history(&self, #[tool(param)] limit: Option<u32>) -> String {
+    pub async fn omni_history(&self, params: Parameters<OmniHistoryParams>) -> String {
+        let limit = params.0.limit;
         let limit = limit.unwrap_or(10).min(50) as usize;
         let session = match self.session.lock() {
             Ok(s) => s.clone(),
@@ -463,7 +541,11 @@ impl OmniServer {
         name = "omni_explain_savings",
         description = "Explain why recent commands were compressed: shows route, filter, input/output bytes, and savings %"
     )]
-    pub async fn omni_explain_savings(&self, #[tool(param)] limit: Option<u32>) -> String {
+    pub async fn omni_explain_savings(
+        &self,
+        params: Parameters<OmniExplainSavingsParams>,
+    ) -> String {
+        let limit = params.0.limit;
         let limit = limit.unwrap_or(10).min(50) as usize;
         let session_id = self
             .session
@@ -502,7 +584,8 @@ impl OmniServer {
         name = "omni_find_noise",
         description = "Analyze recent raw terminal traces to identify repetitive noisy patterns and suggest TOML filters"
     )]
-    pub async fn omni_find_noise(&self, #[tool(param)] limit: Option<u32>) -> String {
+    pub async fn omni_find_noise(&self, params: Parameters<OmniFindNoiseParams>) -> String {
+        let limit = params.0.limit;
         let limit = limit.unwrap_or(50).min(200) as usize;
         let traces = match self.store.get_recent_traces(limit) {
             Ok(t) => t,
@@ -671,12 +754,10 @@ impl OmniServer {
         name = "omni_knowledge",
         description = "Query or store cross-session project knowledge (persistent across sessions)"
     )]
-    pub async fn omni_knowledge(
-        &self,
-        #[tool(param)] action: String,
-        #[tool(param)] key: Option<String>,
-        #[tool(param)] value: Option<String>,
-    ) -> String {
+    pub async fn omni_knowledge(&self, params: Parameters<OmniKnowledgeParams>) -> String {
+        let action = params.0.action;
+        let key = params.0.key;
+        let value = params.0.value;
         let project_path = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
@@ -723,75 +804,6 @@ fn compute_project_hash_str(project_path: &str) -> String {
     hasher.update(project_path.as_bytes());
     hex::encode(&hasher.finalize()[..8])
 }
-#[allow(refining_impl_trait)]
-impl ServerHandler for OmniServer {
-    fn call_tool<'a>(
-        &'a self,
-        request: rmcp::model::CallToolRequestParam,
-        context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<rmcp::model::CallToolResult, rmcp::Error>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let tcc = ToolCallContext::new(self, request, context);
-            match tcc.name() {
-                "omni_retrieve" => Self::omni_retrieve_tool_call(tcc).await,
-                "omni_learn" => Self::omni_learn_tool_call(tcc).await,
-                "omni_density" => Self::omni_density_tool_call(tcc).await,
-                "omni_trust" => Self::omni_trust_tool_call(tcc).await,
-                "omni_context" => Self::omni_context_tool_call(tcc).await,
-                "omni_session" => Self::omni_session_tool_call(tcc).await,
-                "omni_search" => Self::omni_search_tool_call(tcc).await,
-                "omni_history" => Self::omni_history_tool_call(tcc).await,
-                "omni_explain_savings" => Self::omni_explain_savings_tool_call(tcc).await,
-                "omni_find_noise" => Self::omni_find_noise_tool_call(tcc).await,
-                "omni_budget" => Self::omni_budget_tool_call(tcc).await,
-                "omni_agents" => Self::omni_agents_tool_call(tcc).await,
-                "omni_knowledge" => Self::omni_knowledge_tool_call(tcc).await,
-                _ => Err(rmcp::Error::invalid_params("method not found", None)),
-            }
-        })
-    }
-
-    // Auto-generates the manifest for MCP clients describing available tools
-    fn list_tools<'a>(
-        &'a self,
-        _request: rmcp::model::PaginatedRequestParam,
-        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<rmcp::model::ListToolsResult, rmcp::Error>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            Ok(rmcp::model::ListToolsResult {
-                tools: vec![
-                    Self::omni_retrieve_tool_attr(),
-                    Self::omni_learn_tool_attr(),
-                    Self::omni_density_tool_attr(),
-                    Self::omni_trust_tool_attr(),
-                    Self::omni_context_tool_attr(),
-                    Self::omni_session_tool_attr(),
-                    Self::omni_search_tool_attr(),
-                    Self::omni_history_tool_attr(),
-                    Self::omni_explain_savings_tool_attr(),
-                    Self::omni_find_noise_tool_attr(),
-                    Self::omni_budget_tool_attr(),
-                    Self::omni_agents_tool_attr(),
-                    Self::omni_knowledge_tool_attr(),
-                ],
-                next_cursor: None,
-            })
-        })
-    }
-}
-
 pub async fn run(store: Arc<Store>, session: Arc<Mutex<SessionState>>) -> anyhow::Result<()> {
     let server = OmniServer { store, session };
 
@@ -817,7 +829,11 @@ mod tests {
         let session = Arc::new(Mutex::new(SessionState::new()));
 
         let server = OmniServer { store, session };
-        let output = server.omni_retrieve("abc".to_string()).await;
+        let output = server
+            .omni_retrieve(Parameters(OmniRetrieveParams {
+                hash: "abc".to_string(),
+            }))
+            .await;
         assert_eq!(output, "Not found: abc");
     }
 
@@ -829,7 +845,9 @@ mod tests {
         let session = Arc::new(Mutex::new(SessionState::new()));
 
         let server = OmniServer { store, session };
-        let output = server.omni_retrieve(hash).await;
+        let output = server
+            .omni_retrieve(Parameters(OmniRetrieveParams { hash }))
+            .await;
         assert_eq!(output, "testing_payload");
     }
 
@@ -841,7 +859,9 @@ mod tests {
 
         let server = OmniServer { store, session };
         let text = "error: something failed\nCompiling deps v1.0".to_string();
-        let density = server.omni_density(text).await;
+        let density = server
+            .omni_density(Parameters(OmniDensityParams { text }))
+            .await;
         assert!(density.contains("Signal analysis:"));
         assert!(density.contains("Critical:"));
     }
@@ -855,7 +875,12 @@ mod tests {
         let server = OmniServer { store, session };
         // 5+ repetitive lines should produce real candidate output
         let repetitive = "Compiling foo v1.0\n".repeat(6);
-        let out = server.omni_learn(repetitive, false).await;
+        let out = server
+            .omni_learn(Parameters(OmniLearnParams {
+                text: repetitive,
+                apply: false,
+            }))
+            .await;
         assert!(
             out.contains("noise patterns"),
             "expected pattern report, got: {out}"
@@ -882,7 +907,12 @@ mod tests {
 
         let server = OmniServer { store, session };
         let diverse = "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel india\n";
-        let out = server.omni_learn(diverse.to_string(), false).await;
+        let out = server
+            .omni_learn(Parameters(OmniLearnParams {
+                text: diverse.to_string(),
+                apply: false,
+            }))
+            .await;
         assert!(
             out.contains("No significant noise patterns"),
             "expected no-patterns message, got: {out}"
@@ -897,7 +927,12 @@ mod tests {
 
         let server = OmniServer { store, session };
         let repetitive = "Downloading dep v1.0\n".repeat(6);
-        let out = server.omni_learn(repetitive, true).await;
+        let out = server
+            .omni_learn(Parameters(OmniLearnParams {
+                text: repetitive,
+                apply: true,
+            }))
+            .await;
         assert!(
             out.contains("Applied") || out.contains("filters"),
             "expected apply confirmation, got: {out}"
@@ -911,7 +946,11 @@ mod tests {
         let session = Arc::new(Mutex::new(SessionState::new()));
 
         let server = OmniServer { store, session };
-        let out = server.omni_trust("/invalid".to_string()).await;
+        let out = server
+            .omni_trust(Parameters(OmniTrustParams {
+                project_path: "/invalid".to_string(),
+            }))
+            .await;
         assert!(out.contains("Failed") || out.contains("Trusted"));
     }
 }
