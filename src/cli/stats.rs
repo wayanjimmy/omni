@@ -397,7 +397,7 @@ fn run_default(store: &Store) -> Result<()> {
             };
             let bar = format_bar_with_empty(pct);
             println!(
-                "    {:<18} {}  {:>5.1}%  ({:>2}x)  {:>5.1}% saved",
+                "   {:<18} {}  {:>5.1}%  ({:>2}x)  {:>5.1}% saved",
                 name.bright_cyan(),
                 bar.bright_blue(),
                 pct,
@@ -420,7 +420,7 @@ fn run_default(store: &Store) -> Result<()> {
 
     print_separator();
     println!(
-        "  💡 {} for full breakdown",
+        "  {} for full breakdown",
         "omni stats --detail".bright_cyan()
     );
 

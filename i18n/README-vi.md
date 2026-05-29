@@ -24,6 +24,7 @@
 - [Vấn đề: Token đắt đỏ & Đầu ra nhiễu loạn](#vấn-đề-token-đắt-đỏ--đầu-ra-nhiễu-loạn)
 - [Giải pháp: Omni](#giải-pháp-omni)
 - [Triết lý](#triết-lý)
+- [Hiệu suất & Các trường hợp sử dụng](#hiệu-suất--các-trường-hợp-sử-dụng)
 - [Giải thích các tính năng](#giải-thích-các-tính-năng)
 - [Kiến trúc](#kiến-trúc)
 - [Bắt đầu nhanh & Cài đặt](#bắt-đầu-nhanh--cài-đặt)
@@ -67,6 +68,29 @@ Các tác nhân AI như Claude chỉ thông minh như những ngữ cảnh mà b
 2. Phản hồi của AI có **chất lượng cao hơn đáng kể** vì cửa sổ ngữ cảnh của nó tập trung cao độ vào vấn đề cốt lõi.
 
 **Hãy dùng thử trong một tuần.** Cảm nhận sự khác biệt về chất lượng và tốc độ lập luận của AI khi nó được nạp bằng một thực đơn tín hiệu thuần túy thay vì những tiếng ồn terminal thô rác.
+
+---
+
+## Hiệu suất & Các trường hợp sử dụng
+<div align="center">
+<img src="../media/performance.png" alt="OMNI" width="600" />
+</div>
+
+OMNI được xây dựng bằng Rust để thực thi không có overhead và đạt hiệu quả tối đa. Dưới đây là các benchmark thực tế được đo lường trên bản binary release:
+
+| Lệnh / Ngữ cảnh | Kích thước đầu vào | Kích thước đầu ra | Tiết kiệm Token | Tác động lên AI |
+|-----------------|--------------------|-------------------|-----------------|-----------------|
+| `docker build` (multi-stage) | 9.2 KB | 49 bytes | **99.5%** | Loại bỏ nhiễu caching; AI nhìn thấy ngay lỗi build thực sự. |
+| `cargo test` (large suite) | 16.5 KB | 4.3 KB | **78.0%** | Loại bỏ hàng trăm test "ok"; AI chỉ tập trung vào các lỗi và stack trace. |
+| `git status` (dirty) | 496 bytes | 113 bytes | **77.2%** | Loại bỏ các file sạch và gợi ý; chỉ giữ lại các file đã sửa đổi/chưa được theo dõi. |
+| `kubectl get pods` | 840 bytes | 762 bytes | **10.0%** | Lọc chọn các pod CrashLoopBackOff/Error, bỏ qua các pod khỏe mạnh. |
+| `git diff` (multi-file) | 397 bytes | 220 bytes | **50.0%** | Giữ lại các hunk có thay đổi, loại bỏ các dòng ngữ cảnh dư thừa. |
+
+- **Độ trễ Pipeline**: **< 100ms** (end-to-end, bao gồm cả khởi động binary)
+- **Tiết kiệm Tổng thể**: Giảm **97.3%** token qua các phiên lập trình trung bình.
+- **ROI (Tỷ suất hoàn vốn)**: Tiết kiệm **$35+ USD** mỗi lập trình viên/tháng (đo lường trên các mô hình flagship).
+
+*Để xem lượng token thực tế bạn đã tiết kiệm được, chỉ cần chạy `omni stats` sau vài ngày sử dụng.*
 
 ---
 
