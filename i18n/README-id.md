@@ -73,7 +73,7 @@ Agen AI seperti Claude hanya sepintar konteks yang Anda berikan kepada mereka. K
 
 ## Performa & Kasus Penggunaan
 <div align="center">
-<img src="../media/performance.png" alt="OMNI" width="600" />
+<img src="../https://omni.weekndlabs.com/media/performance.png" alt="OMNI" width="600" />
 </div>
 
 OMNI dibangun dengan Rust untuk eksekusi tanpa overhead dan efisiensi tinggi. Berikut adalah tolok ukur aktual yang diukur pada binary release:

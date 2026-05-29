@@ -75,7 +75,7 @@
 
 ## الأداء وحالات الاستخدام
 <div align="center">
-<img src="../media/performance.png" alt="OMNI" width="600" />
+<img src="../https://omni.weekndlabs.com/media/performance.png" alt="OMNI" width="600" />
 </div>
 
 تم بناء OMNI باستخدام لغة Rust لتنفيذ خالٍ من العبء الإضافي وبكفاءة فائقة. فيما يلي المعايير الفعلية التي تم قياسها على الإصدار النهائي:

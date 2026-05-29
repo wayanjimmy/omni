@@ -73,7 +73,7 @@ Claude와 같은 AI 에이전트는 제공하는 컨텍스트만큼만 영리합
 
 ## 성능 및 사용 사례
 <div align="center">
-<img src="../media/performance.png" alt="OMNI" width="600" />
+<img src="../https://omni.weekndlabs.com/media/performance.png" alt="OMNI" width="600" />
 </div>
 
 OMNI는 제로 오버헤드 실행과 무자비한 효율성을 위해 Rust로 구축되었습니다. 릴리스 바이너리에서 측정한 실제 벤치마크는 다음과 같습니다.

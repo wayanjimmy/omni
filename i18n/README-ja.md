@@ -73,7 +73,7 @@ ClaudeのようなAIエージェントは、提供するコンテキストと同
 
 ## パフォーマンスとユースケース
 <div align="center">
-<img src="../media/performance.png" alt="OMNI" width="600" />
+<img src="../https://omni.weekndlabs.com/media/performance.png" alt="OMNI" width="600" />
 </div>
 
 OMNIはRustで構築されており、オーバーヘッドゼロの実行と極めて高い効率を実現しています。以下は、リリースバイナリで測定された実際のベンチマークです：

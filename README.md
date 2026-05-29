@@ -73,7 +73,7 @@ AI agents like Claude are only as smart as the context you feed them. When you f
 
 ## Performance & Use Cases
 <div align="center">
-<img src="media/performance.png" alt="OMNI" width="600" />
+<img src="https://omni.weekndlabs.com/media/performance.png" alt="OMNI" width="600" />
 </div>
 
 OMNI is built in Rust for zero-overhead execution and ruthless efficiency. Here are the actual benchmarks measured on the release binary:

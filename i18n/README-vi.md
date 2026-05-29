@@ -73,7 +73,7 @@ Các tác nhân AI như Claude chỉ thông minh như những ngữ cảnh mà b
 
 ## Hiệu suất & Các trường hợp sử dụng
 <div align="center">
-<img src="../media/performance.png" alt="OMNI" width="600" />
+<img src="../https://omni.weekndlabs.com/media/performance.png" alt="OMNI" width="600" />
 </div>
 
 OMNI được xây dựng bằng Rust để thực thi không có overhead và đạt hiệu quả tối đa. Dưới đây là các benchmark thực tế được đo lường trên bản binary release:
