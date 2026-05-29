@@ -169,15 +169,26 @@ fn build_summary(state: &SessionState, _store: &Store) -> String {
         }
     }
 
+    // Feature B: Inject critical pinned files before truncating
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    out.push_str(&crate::hooks::session_start::read_pinned_files(&cwd));
+
     out.push_str(
         "\nREMINDER: The above is OMNI's session context snapshot. Trust this data — \n\
         it was computed from actual command outputs. Do not re-run commands \n\
         to verify information already present here.\n",
     );
 
-    if out.len() > 2000 {
-        out.truncate(1975); // Leave room for suffix
-        out.push_str("... (N items omitted)\n");
+    // Feature D: Intelligent PreCompact v2 (Token-based Budgeting)
+    // We aim for a strict 6000 token limit to keep context lightweight
+    let current_tokens = crate::util::token_estimate::count_tokens(&out, "cl100k_base");
+    if current_tokens > 6000 {
+        // Approximate character length for 6000 tokens
+        let target_chars = ((6000.0 / current_tokens as f64) * out.len() as f64) as usize;
+        out.truncate(target_chars.saturating_sub(50));
+        out.push_str("\n... [OMNI: Intelligently omitted to stay within 6000 token budget]\n");
     }
 
     out
@@ -224,8 +235,8 @@ mod tests {
     fn compact_summary_is_within_length_limit() {
         let (store, _dir) = get_store();
         let mut state = SessionState::new();
-        state.add_hot_file(&"A".repeat(300));
-        state.add_error(&"B".repeat(300));
+        state.add_hot_file(&"A".repeat(50000));
+        state.add_error(&"B".repeat(50000));
         let session = Arc::new(Mutex::new(state));
 
         let input = json!({
@@ -235,7 +246,11 @@ mod tests {
 
         let out_str = process_payload(&input.to_string(), store, session).expect("must succeed");
         let parsed: HookOutput = serde_json::from_str(&out_str).expect("must succeed");
-        assert!(parsed.hook_specific_output.system_prompt_addition.len() <= 2000);
+        let token_count = crate::util::token_estimate::count_tokens(
+            &parsed.hook_specific_output.system_prompt_addition,
+            "cl100k_base",
+        );
+        assert!(token_count <= 6100, "Token count was {}", token_count);
     }
 
     #[test]

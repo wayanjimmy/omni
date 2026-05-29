@@ -415,34 +415,50 @@ fn build_additional_context(
         0
     };
 
-    let session_total = session
-        .as_ref()
-        .and_then(|s| s.lock().ok())
-        .map(|s| s.estimated_tokens_saved())
-        .unwrap_or(0);
+    let mut session_total = 0;
+    let mut command_count = 0;
+    let mut pressure_msg = None;
 
-    let command_count = session
-        .as_ref()
-        .and_then(|s| s.lock().ok())
-        .map(|s| s.command_count)
-        .unwrap_or(0);
+    if let Some(lock) = session
+        && let Ok(mut s) = lock.lock()
+    {
+        session_total = s.estimated_tokens_saved();
+        command_count = s.command_count;
+
+        // Feature A: Context Pressure System
+        s.estimated_current_tokens += result.filtered_tokens as u64;
+        s.recalculate_pressure();
+
+        if s.should_emit_pressure_warning() {
+            pressure_msg = s.pressure_warning();
+            s.last_pressure_warning_at = Some(command_count);
+        }
+    }
+
+    let mut msgs = Vec::new();
+
+    if let Some(warning) = pressure_msg {
+        msgs.push(warning);
+    }
 
     // F-10: Inject for significant single-call savings (>= 500 tokens)
     if saved_this_call >= 500 {
-        return Some(format!(
+        msgs.push(format!(
             "[OMNI: -{saved_this_call}tok this call | -{session_total}tok session | {savings:.0}% compression]",
             savings = result.savings_pct()
         ));
-    }
-
-    // F-10: Inject milestone summary every 10 commands if total savings significant
-    if command_count > 0 && command_count.is_multiple_of(10) && session_total >= 1000 {
-        return Some(format!(
+    } else if command_count > 0 && command_count.is_multiple_of(10) && session_total >= 1000 {
+        // F-10: Inject milestone summary every 10 commands if total savings significant
+        msgs.push(format!(
             "[OMNI session milestone: -{session_total}tok saved across {command_count} commands]"
         ));
     }
 
-    None
+    if msgs.is_empty() {
+        None
+    } else {
+        Some(msgs.join("\n"))
+    }
 }
 
 fn wrap_hook_output(distilled: String) -> String {
